@@ -23,6 +23,17 @@ const scratchMaximum = new Cartesian3();
 const cartographicScratch = new Cartographic();
 const toPack = new Cartesian2();
 
+function getExaggeratedHeight(height, exaggeration, relativeHeight) {
+  return (height - relativeHeight) * exaggeration + relativeHeight;
+}
+
+function getScaledSkirtHeight(skirtHeight, exaggeration, bakeExaggeration) {
+  if (!bakeExaggeration) {
+    return skirtHeight;
+  }
+  return skirtHeight * Math.abs(exaggeration);
+}
+
 function createVerticesFromQuantizedTerrainMesh(
   parameters,
   transferableObjects,
@@ -39,8 +50,14 @@ function createVerticesFromQuantizedTerrainMesh(
 
   const exaggeration = parameters.exaggeration;
   const exaggerationRelativeHeight = parameters.exaggerationRelativeHeight;
+  const bakeExaggeration = parameters.bakeExaggeration === true;
   const hasExaggeration = exaggeration !== 1.0;
-  const includeGeodeticSurfaceNormals = hasExaggeration;
+  const applyBakedExaggeration = bakeExaggeration && hasExaggeration;
+  const includeGeodeticSurfaceNormals = !bakeExaggeration && hasExaggeration;
+  const encodingExaggeration = bakeExaggeration ? 1.0 : exaggeration;
+  const encodingExaggerationRelativeHeight = bakeExaggeration
+    ? 0.0
+    : exaggerationRelativeHeight;
 
   const rectangle = Rectangle.clone(parameters.rectangle);
   const west = rectangle.west;
@@ -52,6 +69,49 @@ function createVerticesFromQuantizedTerrainMesh(
 
   const minimumHeight = parameters.minimumHeight;
   const maximumHeight = parameters.maximumHeight;
+  const adjustedMinimumHeight = applyBakedExaggeration
+    ? getExaggeratedHeight(
+        minimumHeight,
+        exaggeration,
+        exaggerationRelativeHeight,
+      )
+    : minimumHeight;
+  const adjustedMaximumHeight = applyBakedExaggeration
+    ? getExaggeratedHeight(
+        maximumHeight,
+        exaggeration,
+        exaggerationRelativeHeight,
+      )
+    : maximumHeight;
+  const encodedMinimumHeight = Math.min(
+    adjustedMinimumHeight,
+    adjustedMaximumHeight,
+  );
+  const encodedMaximumHeight = Math.max(
+    adjustedMinimumHeight,
+    adjustedMaximumHeight,
+  );
+
+  const westSkirtHeight = getScaledSkirtHeight(
+    parameters.westSkirtHeight,
+    exaggeration,
+    bakeExaggeration,
+  );
+  const southSkirtHeight = getScaledSkirtHeight(
+    parameters.southSkirtHeight,
+    exaggeration,
+    bakeExaggeration,
+  );
+  const eastSkirtHeight = getScaledSkirtHeight(
+    parameters.eastSkirtHeight,
+    exaggeration,
+    bakeExaggeration,
+  );
+  const northSkirtHeight = getScaledSkirtHeight(
+    parameters.northSkirtHeight,
+    exaggeration,
+    bakeExaggeration,
+  );
 
   const center = parameters.relativeToCenter;
   const fromENU = Transforms.eastNorthUpToFixedFrame(center, ellipsoid);
@@ -110,11 +170,18 @@ function createVerticesFromQuantizedTerrainMesh(
 
     const u = rawU / maxShort;
     const v = rawV / maxShort;
-    const height = CesiumMath.lerp(
+    let height = CesiumMath.lerp(
       minimumHeight,
       maximumHeight,
       heightBuffer[i] / maxShort,
     );
+    if (applyBakedExaggeration) {
+      height = getExaggeratedHeight(
+        height,
+        exaggeration,
+        exaggerationRelativeHeight,
+      );
+    }
 
     cartographicScratch.longitude = CesiumMath.lerp(west, east, u);
     cartographicScratch.latitude = CesiumMath.lerp(south, north, v);
@@ -176,23 +243,23 @@ function createVerticesFromQuantizedTerrainMesh(
   );
 
   let occludeePointInScaledSpace;
-  if (minimumHeight < 0.0) {
+  if (encodedMinimumHeight < 0.0) {
     // Horizon culling point needs to be recomputed since the tile is at least partly under the ellipsoid.
     const occluder = new EllipsoidalOccluder(ellipsoid);
     occludeePointInScaledSpace =
       occluder.computeHorizonCullingPointPossiblyUnderEllipsoid(
         center,
         positions,
-        minimumHeight,
+        encodedMinimumHeight,
       );
   }
 
-  let hMin = minimumHeight;
+  let hMin = encodedMinimumHeight;
   hMin = Math.min(
     hMin,
     findMinMaxSkirts(
       parameters.westIndices,
-      parameters.westSkirtHeight,
+      westSkirtHeight,
       heights,
       uvs,
       rectangle,
@@ -206,7 +273,7 @@ function createVerticesFromQuantizedTerrainMesh(
     hMin,
     findMinMaxSkirts(
       parameters.southIndices,
-      parameters.southSkirtHeight,
+      southSkirtHeight,
       heights,
       uvs,
       rectangle,
@@ -220,7 +287,7 @@ function createVerticesFromQuantizedTerrainMesh(
     hMin,
     findMinMaxSkirts(
       parameters.eastIndices,
-      parameters.eastSkirtHeight,
+      eastSkirtHeight,
       heights,
       uvs,
       rectangle,
@@ -234,7 +301,7 @@ function createVerticesFromQuantizedTerrainMesh(
     hMin,
     findMinMaxSkirts(
       parameters.northIndices,
-      parameters.northSkirtHeight,
+      northSkirtHeight,
       heights,
       uvs,
       rectangle,
@@ -250,13 +317,13 @@ function createVerticesFromQuantizedTerrainMesh(
     center,
     aaBox,
     hMin,
-    maximumHeight,
+    encodedMaximumHeight,
     fromENU,
     hasVertexNormals,
     includeWebMercatorT,
     includeGeodeticSurfaceNormals,
-    exaggeration,
-    exaggerationRelativeHeight,
+    encodingExaggeration,
+    encodingExaggerationRelativeHeight,
   );
   const vertexStride = encoding.stride;
   const size =
@@ -315,7 +382,7 @@ function createVerticesFromQuantizedTerrainMesh(
     octEncodedNormals,
     ellipsoid,
     rectangle,
-    parameters.westSkirtHeight,
+    westSkirtHeight,
     southMercatorY,
     oneOverMercatorHeight,
     westLongitudeOffset,
@@ -332,7 +399,7 @@ function createVerticesFromQuantizedTerrainMesh(
     octEncodedNormals,
     ellipsoid,
     rectangle,
-    parameters.southSkirtHeight,
+    southSkirtHeight,
     southMercatorY,
     oneOverMercatorHeight,
     southLongitudeOffset,
@@ -349,7 +416,7 @@ function createVerticesFromQuantizedTerrainMesh(
     octEncodedNormals,
     ellipsoid,
     rectangle,
-    parameters.eastSkirtHeight,
+    eastSkirtHeight,
     southMercatorY,
     oneOverMercatorHeight,
     eastLongitudeOffset,
@@ -366,7 +433,7 @@ function createVerticesFromQuantizedTerrainMesh(
     octEncodedNormals,
     ellipsoid,
     rectangle,
-    parameters.northSkirtHeight,
+    northSkirtHeight,
     southMercatorY,
     oneOverMercatorHeight,
     northLongitudeOffset,
@@ -394,8 +461,8 @@ function createVerticesFromQuantizedTerrainMesh(
     northIndicesWestToEast: northIndicesWestToEast,
     vertexStride: vertexStride,
     center: center,
-    minimumHeight: minimumHeight,
-    maximumHeight: maximumHeight,
+    minimumHeight: encodedMinimumHeight,
+    maximumHeight: encodedMaximumHeight,
     occludeePointInScaledSpace: occludeePointInScaledSpace,
     encoding: encoding,
     indexCountWithoutSkirts: parameters.indices.length,

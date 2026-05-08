@@ -191,8 +191,9 @@ function GlobeSurfaceTileProvider(options) {
   this._hasLoadedTilesThisFrame = false;
   this._hasFillTilesThisFrame = false;
 
-  this._oldVerticalExaggeration = undefined;
-  this._oldVerticalExaggerationRelativeHeight = undefined;
+  this._oldTerrainExaggeration = undefined;
+  this._oldTerrainExaggerationRelativeHeight = undefined;
+  this._oldBakeTerrainExaggeration = undefined;
   this._oldSceneMode = SceneMode.SCENE3D;
 }
 
@@ -373,6 +374,41 @@ function updateCredits(surface, frameState) {
   }
 }
 
+function invalidateTileForTerrainExaggerationRebuild(
+  tile,
+  quadtree,
+  vertexArraysToDestroy,
+) {
+  const surfaceTile = tile.data;
+  if (!defined(surfaceTile) || !defined(surfaceTile.terrainData)) {
+    return;
+  }
+
+  if (defined(surfaceTile.vertexArray)) {
+    vertexArraysToDestroy.push(surfaceTile.vertexArray);
+    surfaceTile.vertexArray = undefined;
+  }
+  if (defined(surfaceTile.wireframeVertexArray)) {
+    vertexArraysToDestroy.push(surfaceTile.wireframeVertexArray);
+    surfaceTile.wireframeVertexArray = undefined;
+  }
+
+  surfaceTile.mesh = undefined;
+  surfaceTile.fill =
+    surfaceTile.fill && surfaceTile.fill.destroy(vertexArraysToDestroy);
+  surfaceTile.boundingVolumeSourceTile = undefined;
+  surfaceTile.boundingVolumeIsFromMesh = false;
+  surfaceTile.terrainState = TerrainState.RECEIVED;
+
+  tile.state = QuadtreeTileLoadState.LOADING;
+
+  quadtree._tileToUpdateHeights.push(tile);
+  const customData = tile.customData;
+  for (const data of customData) {
+    data.level = -1;
+  }
+}
+
 /**
  * Called at the beginning of each render frame, before {@link QuadtreeTileProvider#showTileThisFrame}
  * @param {FrameState} frameState The frame state.
@@ -485,34 +521,38 @@ GlobeSurfaceTileProvider.prototype.endUpdate = function (frameState) {
     );
   }
 
-  // When vertical exaggeration changes, all of the loaded tiles need to generate
-  // geodetic surface normals so they can scale properly when rendered.
-  // When exaggeration is reset, geodetic surface normals are removed to decrease
-  // memory usage. Some tiles might have been constructed with the correct
-  // exaggeration already, so skip over them.
-
-  // If the geodetic surface normals can't be created because the tile doesn't
-  // have a mesh, keep checking until the tile does have a mesh. This can happen
-  // if the tile's mesh starts construction in a worker thread right before the
-  // exaggeration changes.
-
   const quadtree = this.quadtree;
-  const exaggeration = frameState.verticalExaggeration;
-  const exaggerationRelativeHeight =
-    frameState.verticalExaggerationRelativeHeight;
+  const exaggeration = frameState.terrainExaggeration;
+  const exaggerationRelativeHeight = frameState.terrainExaggerationRelativeHeight;
+  const bakeTerrainExaggeration = frameState.bakeTerrainExaggeration;
+  const bakeModeChanged =
+    this._oldBakeTerrainExaggeration !== bakeTerrainExaggeration;
   const exaggerationChanged =
-    this._oldVerticalExaggeration !== exaggeration ||
-    this._oldVerticalExaggerationRelativeHeight !== exaggerationRelativeHeight;
+    this._oldTerrainExaggeration !== exaggeration ||
+    this._oldTerrainExaggerationRelativeHeight !== exaggerationRelativeHeight ||
+    bakeModeChanged;
 
   // Keep track of the next time there is a change in exaggeration
-  this._oldVerticalExaggeration = exaggeration;
-  this._oldVerticalExaggerationRelativeHeight = exaggerationRelativeHeight;
+  this._oldTerrainExaggeration = exaggeration;
+  this._oldTerrainExaggerationRelativeHeight = exaggerationRelativeHeight;
+  this._oldBakeTerrainExaggeration = bakeTerrainExaggeration;
 
   if (exaggerationChanged) {
-    quadtree.forEachLoadedTile(function (tile) {
-      const surfaceTile = tile.data;
-      surfaceTile.updateExaggeration(tile, frameState, quadtree);
-    });
+    if (bakeTerrainExaggeration || bakeModeChanged) {
+      const vertexArraysToDestroy = this._vertexArraysToDestroy;
+      quadtree.forEachLoadedTile(function (tile) {
+        invalidateTileForTerrainExaggerationRebuild(
+          tile,
+          quadtree,
+          vertexArraysToDestroy,
+        );
+      });
+    } else {
+      quadtree.forEachLoadedTile(function (tile) {
+        const surfaceTile = tile.data;
+        surfaceTile.updateExaggeration(tile, frameState, quadtree);
+      });
+    }
   }
 
   const sceneModeChanged = this._oldSceneMode !== frameState.mode;

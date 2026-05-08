@@ -42,6 +42,10 @@ const matrix4Scratch = new Matrix4();
 const minimumScratch = new Cartesian3();
 const maximumScratch = new Cartesian3();
 
+function getExaggeratedHeight(height, exaggeration, relativeHeight) {
+  return (height - relativeHeight) * exaggeration + relativeHeight;
+}
+
 /**
  * Fills an array of vertices from a heightmap image.
  *
@@ -55,6 +59,7 @@ const maximumScratch = new Cartesian3();
  *                 projection, this is meters.
  * @param {number} [options.exaggeration=1.0] The scale used to exaggerate the terrain.
  * @param {number} [options.exaggerationRelativeHeight=0.0] The height from which terrain is exaggerated.
+ * @param {boolean} [options.bakeExaggeration=false] Whether to bake exaggeration into mesh geometry instead of applying it in the shader.
  * @param {Rectangle} [options.rectangle] The rectangle covered by the heightmap, in geodetic coordinates with north, south, east and
  *                 west properties in radians.  Either rectangle or nativeRectangle must be provided.  If both
  *                 are provided, they're assumed to be consistent.
@@ -145,7 +150,6 @@ HeightmapTessellator.computeVertices = function (options) {
   const width = options.width;
   const height = options.height;
   const skirtHeight = options.skirtHeight;
-  const hasSkirts = skirtHeight > 0.0;
 
   const isGeographic = options.isGeographic ?? true;
   const ellipsoid = options.ellipsoid ?? Ellipsoid.default;
@@ -190,8 +194,18 @@ HeightmapTessellator.computeVertices = function (options) {
 
   const exaggeration = options.exaggeration ?? 1.0;
   const exaggerationRelativeHeight = options.exaggerationRelativeHeight ?? 0.0;
+  const bakeExaggeration = options.bakeExaggeration === true;
   const hasExaggeration = exaggeration !== 1.0;
-  const includeGeodeticSurfaceNormals = hasExaggeration;
+  const applyBakedExaggeration = bakeExaggeration && hasExaggeration;
+  const includeGeodeticSurfaceNormals = !bakeExaggeration && hasExaggeration;
+  const runtimeExaggeration = bakeExaggeration ? 1.0 : exaggeration;
+  const runtimeExaggerationRelativeHeight = bakeExaggeration
+    ? 0.0
+    : exaggerationRelativeHeight;
+  const adjustedSkirtHeight = bakeExaggeration
+    ? skirtHeight * Math.abs(exaggeration)
+    : skirtHeight;
+  const hasSkirts = adjustedSkirtHeight > 0.0;
 
   const structure = options.structure ?? HeightmapTessellator.DEFAULT_STRUCTURE;
   const heightScale =
@@ -259,7 +273,7 @@ HeightmapTessellator.computeVertices = function (options) {
   let hMin = Number.POSITIVE_INFINITY;
 
   const gridVertexCount = width * height;
-  const edgeVertexCount = skirtHeight > 0.0 ? width * 2 + height * 2 : 0;
+  const edgeVertexCount = adjustedSkirtHeight > 0.0 ? width * 2 + height * 2 : 0;
   const vertexCount = gridVertexCount + edgeVertexCount;
 
   const positions = new Array(vertexCount);
@@ -307,7 +321,7 @@ HeightmapTessellator.computeVertices = function (options) {
 
     const isNorthEdge = rowIndex === startRow;
     const isSouthEdge = rowIndex === endRow - 1;
-    if (skirtHeight > 0.0) {
+    if (adjustedSkirtHeight > 0.0) {
       if (isNorthEdge) {
         latitude += skirtOffsetPercentage * rectangleHeight;
       } else if (isSouthEdge) {
@@ -369,6 +383,13 @@ HeightmapTessellator.computeVertices = function (options) {
       }
 
       heightSample = heightSample * heightScale + heightOffset;
+      if (applyBakedExaggeration) {
+        heightSample = getExaggeratedHeight(
+          heightSample,
+          exaggeration,
+          exaggerationRelativeHeight,
+        );
+      }
 
       maximumHeight = Math.max(maximumHeight, heightSample);
       minimumHeight = Math.min(minimumHeight, heightSample);
@@ -386,7 +407,7 @@ HeightmapTessellator.computeVertices = function (options) {
 
       let index = row * width + col;
 
-      if (skirtHeight > 0.0) {
+      if (adjustedSkirtHeight > 0.0) {
         const isWestEdge = colIndex === startCol;
         const isEastEdge = colIndex === endCol - 1;
         const isEdge = isNorthEdge || isSouthEdge || isWestEdge || isEastEdge;
@@ -396,7 +417,7 @@ HeightmapTessellator.computeVertices = function (options) {
           // Don't generate skirts on the corners.
           continue;
         } else if (isEdge) {
-          heightSample -= skirtHeight;
+          heightSample -= adjustedSkirtHeight;
 
           if (isWestEdge) {
             // The outer loop iterates north to south but the indices are ordered south to north, hence the index flip below
@@ -486,8 +507,8 @@ HeightmapTessellator.computeVertices = function (options) {
     false,
     includeWebMercatorT,
     includeGeodeticSurfaceNormals,
-    exaggeration,
-    exaggerationRelativeHeight,
+    runtimeExaggeration,
+    runtimeExaggerationRelativeHeight,
   );
   const vertices = new Float32Array(vertexCount * encoding.stride);
 

@@ -256,6 +256,7 @@ const createMeshTaskProcessorThrottle = new TaskProcessor(
  * @param {number} options.level The level of the tile for which to create the terrain data.
  * @param {number} [options.exaggeration=1.0] The scale used to exaggerate the terrain.
  * @param {number} [options.exaggerationRelativeHeight=0.0] The height relative to which terrain is exaggerated.
+ * @param {boolean} [options.bakeExaggeration=false] Whether to bake exaggeration into mesh geometry instead of applying it in the shader.
  * @param {boolean} [options.throttle=true] If true, indicates that this operation will need to be retried if too many asynchronous mesh creations are already in progress.
  * @returns {Promise<TerrainMesh>|undefined} A promise for the terrain mesh, or undefined if too many
  *          asynchronous mesh creations are already in progress and the operation should
@@ -277,6 +278,7 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
   const level = options.level;
   const exaggeration = options.exaggeration ?? 1.0;
   const exaggerationRelativeHeight = options.exaggerationRelativeHeight ?? 0.0;
+  const bakeExaggeration = options.bakeExaggeration ?? false;
   const throttle = options.throttle ?? true;
 
   const ellipsoid = tilingScheme.ellipsoid;
@@ -306,6 +308,7 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
     ellipsoid: ellipsoid,
     exaggeration: exaggeration,
     exaggerationRelativeHeight: exaggerationRelativeHeight,
+    bakeExaggeration: bakeExaggeration,
   });
 
   if (!defined(verticesPromise)) {

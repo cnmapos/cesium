@@ -403,6 +403,16 @@ function Scene(options) {
   this.verticalExaggerationRelativeHeight = 0.0;
 
   /**
+   * When true, terrain exaggeration is baked during terrain mesh creation.
+   * Runtime terrain exaggeration in the globe shader is disabled to avoid
+   * double exaggeration.
+   *
+   * @type {boolean}
+   * @default false
+   */
+  this.bakeTerrainExaggeration = false;
+
+  /**
    * This property is for debugging only; it is not for production use.
    * <p>
    * A function that determines what commands are executed.  As shown in the examples below,
@@ -2015,9 +2025,16 @@ Scene.prototype.updateFrameState = function () {
       globe._terrainExaggerationRelativeHeight;
     globe._terrainExaggerationChanged = false;
   }
-  frameState.verticalExaggeration = this.verticalExaggeration;
-  frameState.verticalExaggerationRelativeHeight =
+  frameState.terrainExaggeration = this.verticalExaggeration;
+  frameState.terrainExaggerationRelativeHeight =
     this.verticalExaggerationRelativeHeight;
+  frameState.bakeTerrainExaggeration = this.bakeTerrainExaggeration;
+  frameState.verticalExaggeration = this.bakeTerrainExaggeration
+    ? 1.0
+    : this.verticalExaggeration;
+  frameState.verticalExaggerationRelativeHeight = this.bakeTerrainExaggeration
+    ? 0.0
+    : this.verticalExaggerationRelativeHeight;
 
   if (
     defined(this._specularEnvironmentCubeMap) &&

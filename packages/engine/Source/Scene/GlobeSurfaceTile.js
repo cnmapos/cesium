@@ -729,20 +729,29 @@ const scratchCreateMeshOptions = {
   level: 0,
   exaggeration: 1.0,
   exaggerationRelativeHeight: 0.0,
+  bakeExaggeration: false,
   throttle: true,
 };
 
 function transform(surfaceTile, frameState, terrainProvider, x, y, level) {
   const tilingScheme = terrainProvider.tilingScheme;
+  const bakeExaggeration = frameState.bakeTerrainExaggeration;
+  const terrainExaggeration = frameState.terrainExaggeration;
+  const terrainExaggerationRelativeHeight =
+    frameState.terrainExaggerationRelativeHeight;
 
   const createMeshOptions = scratchCreateMeshOptions;
   createMeshOptions.tilingScheme = tilingScheme;
   createMeshOptions.x = x;
   createMeshOptions.y = y;
   createMeshOptions.level = level;
-  createMeshOptions.exaggeration = frameState.verticalExaggeration;
-  createMeshOptions.exaggerationRelativeHeight =
-    frameState.verticalExaggerationRelativeHeight;
+  createMeshOptions.exaggeration = bakeExaggeration
+    ? terrainExaggeration
+    : frameState.verticalExaggeration;
+  createMeshOptions.exaggerationRelativeHeight = bakeExaggeration
+    ? terrainExaggerationRelativeHeight
+    : frameState.verticalExaggerationRelativeHeight;
+  createMeshOptions.bakeExaggeration = bakeExaggeration;
   createMeshOptions.throttle = true;
 
   const terrainData = surfaceTile.terrainData;
