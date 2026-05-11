@@ -337,6 +337,32 @@ function FrameState(context, creditDisplay, jobScheduler) {
   this.bakeTerrainExaggeration = false;
 
   /**
+   * Whether to print terrain exaggeration bake debug logs.
+   *
+   * @type {boolean}
+   * @default false
+   */
+  this.debugBakeTerrainExaggeration = false;
+
+  /**
+   * Runtime exaggeration used specifically by terrain rendering/shaders.
+   * This can differ from `verticalExaggeration` when terrain exaggeration
+   * is baked into mesh geometry.
+   *
+   * @type {number}
+   * @default 1.0
+   */
+  this.terrainRuntimeExaggeration = 1.0;
+
+  /**
+   * Runtime relative height used specifically by terrain rendering/shaders.
+   *
+   * @type {number}
+   * @default 0.0
+   */
+  this.terrainRuntimeExaggerationRelativeHeight = 0.0;
+
+  /**
    * @typedef FrameState.ShadowState
    * @type {object}
    * @property {boolean} shadowsEnabled Whether there are any active shadow maps this frame.

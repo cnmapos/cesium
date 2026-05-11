@@ -730,6 +730,7 @@ const scratchCreateMeshOptions = {
   exaggeration: 1.0,
   exaggerationRelativeHeight: 0.0,
   bakeExaggeration: false,
+  debugBakeTerrainExaggeration: false,
   throttle: true,
 };
 
@@ -747,12 +748,25 @@ function transform(surfaceTile, frameState, terrainProvider, x, y, level) {
   createMeshOptions.level = level;
   createMeshOptions.exaggeration = bakeExaggeration
     ? terrainExaggeration
-    : frameState.verticalExaggeration;
+    : frameState.terrainRuntimeExaggeration;
   createMeshOptions.exaggerationRelativeHeight = bakeExaggeration
     ? terrainExaggerationRelativeHeight
-    : frameState.verticalExaggerationRelativeHeight;
+    : frameState.terrainRuntimeExaggerationRelativeHeight;
   createMeshOptions.bakeExaggeration = bakeExaggeration;
+  createMeshOptions.debugBakeTerrainExaggeration =
+    frameState.debugBakeTerrainExaggeration;
   createMeshOptions.throttle = true;
+
+  if (frameState.debugBakeTerrainExaggeration && bakeExaggeration) {
+    console.log("[BakeEx][GlobeSurfaceTile.transform] createMesh", {
+      x: x,
+      y: y,
+      level: level,
+      exaggeration: createMeshOptions.exaggeration,
+      exaggerationRelativeHeight: createMeshOptions.exaggerationRelativeHeight,
+      terrainDataType: surfaceTile.terrainData?.constructor?.name,
+    });
+  }
 
   const terrainData = surfaceTile.terrainData;
   const meshPromise = terrainData.createMesh(createMeshOptions);

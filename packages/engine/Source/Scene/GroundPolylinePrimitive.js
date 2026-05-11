@@ -724,6 +724,12 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
         geometryInstance.geometry,
         frameState.mapProjection,
       );
+      GroundPolylineGeometry.setTerrainExaggeration(
+        geometryInstance.geometry,
+        frameState.verticalExaggeration,
+        frameState.verticalExaggerationRelativeHeight,
+        frameState.bakeTerrainExaggeration,
+      );
 
       groundInstances[i] = new GeometryInstance({
         geometry: geometryInstance.geometry,

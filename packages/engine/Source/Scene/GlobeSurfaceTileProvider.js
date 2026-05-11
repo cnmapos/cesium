@@ -378,6 +378,7 @@ function invalidateTileForTerrainExaggerationRebuild(
   tile,
   quadtree,
   vertexArraysToDestroy,
+  debugBakeTerrainExaggeration,
 ) {
   const surfaceTile = tile.data;
   if (!defined(surfaceTile) || !defined(surfaceTile.terrainData)) {
@@ -394,11 +395,13 @@ function invalidateTileForTerrainExaggerationRebuild(
   }
 
   surfaceTile.mesh = undefined;
+  surfaceTile.terrainData = undefined;
   surfaceTile.fill =
     surfaceTile.fill && surfaceTile.fill.destroy(vertexArraysToDestroy);
   surfaceTile.boundingVolumeSourceTile = undefined;
   surfaceTile.boundingVolumeIsFromMesh = false;
-  surfaceTile.terrainState = TerrainState.RECEIVED;
+  surfaceTile.request = undefined;
+  surfaceTile.terrainState = TerrainState.UNLOADED;
 
   tile.state = QuadtreeTileLoadState.LOADING;
 
@@ -406,6 +409,14 @@ function invalidateTileForTerrainExaggerationRebuild(
   const customData = tile.customData;
   for (const data of customData) {
     data.level = -1;
+  }
+
+  if (debugBakeTerrainExaggeration && tile.level <= 3) {
+    console.log("[BakeEx][GlobeSurfaceTileProvider] invalidated tile", {
+      x: tile.x,
+      y: tile.y,
+      level: tile.level,
+    });
   }
 }
 
@@ -523,9 +534,13 @@ GlobeSurfaceTileProvider.prototype.endUpdate = function (frameState) {
 
   const quadtree = this.quadtree;
   const exaggeration = frameState.terrainExaggeration;
-  const exaggerationRelativeHeight = frameState.terrainExaggerationRelativeHeight;
+  const exaggerationRelativeHeight =
+    frameState.terrainExaggerationRelativeHeight;
   const bakeTerrainExaggeration = frameState.bakeTerrainExaggeration;
+  const debugBakeTerrainExaggeration = frameState.debugBakeTerrainExaggeration;
+  const hasPreviousBakeState = defined(this._oldBakeTerrainExaggeration);
   const bakeModeChanged =
+    hasPreviousBakeState &&
     this._oldBakeTerrainExaggeration !== bakeTerrainExaggeration;
   const exaggerationChanged =
     this._oldTerrainExaggeration !== exaggeration ||
@@ -538,15 +553,34 @@ GlobeSurfaceTileProvider.prototype.endUpdate = function (frameState) {
   this._oldBakeTerrainExaggeration = bakeTerrainExaggeration;
 
   if (exaggerationChanged) {
+    if (debugBakeTerrainExaggeration) {
+      console.log("[BakeEx][GlobeSurfaceTileProvider] exaggerationChanged", {
+        exaggeration: exaggeration,
+        exaggerationRelativeHeight: exaggerationRelativeHeight,
+        bakeTerrainExaggeration: bakeTerrainExaggeration,
+      });
+    }
+
     if (bakeTerrainExaggeration || bakeModeChanged) {
       const vertexArraysToDestroy = this._vertexArraysToDestroy;
+      let invalidatedCount = 0;
       quadtree.forEachLoadedTile(function (tile) {
+        ++invalidatedCount;
         invalidateTileForTerrainExaggerationRebuild(
           tile,
           quadtree,
           vertexArraysToDestroy,
+          debugBakeTerrainExaggeration,
         );
       });
+      if (debugBakeTerrainExaggeration) {
+        console.log(
+          "[BakeEx][GlobeSurfaceTileProvider] invalidated loaded tiles",
+          {
+            count: invalidatedCount,
+          },
+        );
+      }
     } else {
       quadtree.forEachLoadedTile(function (tile) {
         const surfaceTile = tile.data;
@@ -1360,9 +1394,9 @@ function updateTileBoundingRegion(tile, tileProvider, frameState) {
 
   // Update bounding regions from the min and max heights
   if (sourceTile !== undefined) {
-    const exaggeration = frameState.verticalExaggeration;
+    const exaggeration = frameState.terrainRuntimeExaggeration;
     const exaggerationRelativeHeight =
-      frameState.verticalExaggerationRelativeHeight;
+      frameState.terrainRuntimeExaggerationRelativeHeight;
     const hasExaggeration = exaggeration !== 1.0;
     if (hasExaggeration) {
       hasBoundingVolumesFromMesh = false;
@@ -2292,9 +2326,9 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
   const encoding = mesh.encoding;
   const tileBoundingRegion = surfaceTile.tileBoundingRegion;
 
-  const exaggeration = frameState.verticalExaggeration;
+  const exaggeration = frameState.terrainRuntimeExaggeration;
   const exaggerationRelativeHeight =
-    frameState.verticalExaggerationRelativeHeight;
+    frameState.terrainRuntimeExaggerationRelativeHeight;
   const hasExaggeration = exaggeration !== 1.0;
   const hasGeodeticSurfaceNormals = encoding.hasGeodeticSurfaceNormals;
 

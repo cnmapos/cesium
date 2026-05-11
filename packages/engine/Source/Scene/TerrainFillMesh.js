@@ -830,9 +830,9 @@ function createFillMesh(tileProvider, frameState, tile, vertexArraysToDestroy) {
   const fill = surfaceTile.fill;
   const rectangle = tile.rectangle;
 
-  const exaggeration = frameState.verticalExaggeration;
+  const exaggeration = frameState.terrainRuntimeExaggeration;
   const exaggerationRelativeHeight =
-    frameState.verticalExaggerationRelativeHeight;
+    frameState.terrainRuntimeExaggerationRelativeHeight;
   const hasExaggeration = exaggeration !== 1.0;
 
   const ellipsoid = tile.tilingScheme.ellipsoid;
@@ -1647,8 +1647,10 @@ function getCorner(
       // northeast destination, southwest source
       vertexIndex = cornerMesh.westIndicesSouthToNorth[0];
     }
-    getVertexFromTileAtCorner(cornerMesh, vertexIndex, u, v, vertex);
-    return vertex;
+    if (defined(vertexIndex)) {
+      getVertexFromTileAtCorner(cornerMesh, vertexIndex, u, v, vertex);
+      return vertex;
+    }
   }
 
   // There is no precise vertex available from the corner or from either adjacent edge.

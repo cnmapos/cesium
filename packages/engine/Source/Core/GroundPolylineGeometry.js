@@ -22,6 +22,7 @@ import Matrix3 from "./Matrix3.js";
 import Plane from "./Plane.js";
 import Quaternion from "./Quaternion.js";
 import Rectangle from "./Rectangle.js";
+import VerticalExaggeration from "./VerticalExaggeration.js";
 import WebMercatorProjection from "./WebMercatorProjection.js";
 
 const PROJECTIONS = [GeographicProjection, WebMercatorProjection];
@@ -29,6 +30,9 @@ const PROJECTION_COUNT = PROJECTIONS.length;
 
 const MITER_BREAK_SMALL = Math.cos(CesiumMath.toRadians(30.0));
 const MITER_BREAK_LARGE = Math.cos(CesiumMath.toRadians(150.0));
+let scratchBakeTerrainExaggeration = false;
+let scratchVerticalExaggeration = 1.0;
+let scratchVerticalExaggerationRelativeHeight = 0.0;
 
 // Initial heights for constructing the wall.
 // Keeping WALL_INITIAL_MIN_HEIGHT near the ellipsoid surface helps
@@ -129,6 +133,9 @@ function GroundPolylineGeometry(options) {
 
   // Used by GroundPolylinePrimitive to signal worker that scenemode is 3D only.
   this._scene3DOnly = false;
+  this._verticalExaggeration = 1.0;
+  this._verticalExaggerationRelativeHeight = 0.0;
+  this._bakeTerrainExaggeration = false;
 }
 
 Object.defineProperties(GroundPolylineGeometry.prototype, {
@@ -144,6 +151,9 @@ Object.defineProperties(GroundPolylineGeometry.prototype, {
       return (
         1.0 +
         this._positions.length * 3 +
+        1.0 +
+        1.0 +
+        1.0 +
         1.0 +
         1.0 +
         1.0 +
@@ -177,6 +187,18 @@ GroundPolylineGeometry.setProjectionAndEllipsoid = function (
 
   groundPolylineGeometry._projectionIndex = projectionIndex;
   groundPolylineGeometry._ellipsoid = mapProjection.ellipsoid;
+};
+
+GroundPolylineGeometry.setTerrainExaggeration = function (
+  groundPolylineGeometry,
+  verticalExaggeration,
+  verticalExaggerationRelativeHeight,
+  bakeTerrainExaggeration,
+) {
+  groundPolylineGeometry._verticalExaggeration = verticalExaggeration;
+  groundPolylineGeometry._verticalExaggerationRelativeHeight =
+    verticalExaggerationRelativeHeight;
+  groundPolylineGeometry._bakeTerrainExaggeration = bakeTerrainExaggeration;
 };
 
 const cart3Scratch1 = new Cartesian3();
@@ -319,6 +341,9 @@ GroundPolylineGeometry.pack = function (value, array, startingIndex) {
 
   array[index++] = value._projectionIndex;
   array[index++] = value._scene3DOnly ? 1.0 : 0.0;
+  array[index++] = value._verticalExaggeration;
+  array[index++] = value._verticalExaggerationRelativeHeight;
+  array[index++] = value._bakeTerrainExaggeration ? 1.0 : 0.0;
 
   return array;
 };
@@ -353,6 +378,13 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
 
   const projectionIndex = array[index++];
   const scene3DOnly = array[index++] === 1.0;
+  const verticalExaggeration = defined(array[index]) ? array[index++] : 1.0;
+  const verticalExaggerationRelativeHeight = defined(array[index])
+    ? array[index++]
+    : 0.0;
+  const bakeTerrainExaggeration = defined(array[index])
+    ? array[index++] === 1.0
+    : false;
 
   if (!defined(result)) {
     result = new GroundPolylineGeometry({
@@ -367,6 +399,10 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
   result._ellipsoid = ellipsoid;
   result._projectionIndex = projectionIndex;
   result._scene3DOnly = scene3DOnly;
+  result._verticalExaggeration = verticalExaggeration;
+  result._verticalExaggerationRelativeHeight =
+    verticalExaggerationRelativeHeight;
+  result._bakeTerrainExaggeration = bakeTerrainExaggeration;
 
   return result;
 };
@@ -462,6 +498,18 @@ GroundPolylineGeometry.createGeometry = function (groundPolylineGeometry) {
   const ellipsoid = groundPolylineGeometry._ellipsoid;
   const granularity = groundPolylineGeometry.granularity;
   const arcType = groundPolylineGeometry.arcType;
+  scratchBakeTerrainExaggeration =
+    groundPolylineGeometry._bakeTerrainExaggeration === true;
+  scratchVerticalExaggeration = defined(
+    groundPolylineGeometry._verticalExaggeration,
+  )
+    ? groundPolylineGeometry._verticalExaggeration
+    : 1.0;
+  scratchVerticalExaggerationRelativeHeight = defined(
+    groundPolylineGeometry._verticalExaggerationRelativeHeight,
+  )
+    ? groundPolylineGeometry._verticalExaggerationRelativeHeight
+    : 0.0;
   const projection = new PROJECTIONS[groundPolylineGeometry._projectionIndex](
     ellipsoid,
   );
@@ -1474,8 +1522,24 @@ function generateGeometryAttributes(
       getHeightsRectangle,
       ellipsoid,
     );
-    const minHeight = minMaxHeights.minimumTerrainHeight;
-    const maxHeight = minMaxHeights.maximumTerrainHeight;
+    let minHeight = minMaxHeights.minimumTerrainHeight;
+    let maxHeight = minMaxHeights.maximumTerrainHeight;
+    if (scratchBakeTerrainExaggeration && scratchVerticalExaggeration !== 1.0) {
+      minHeight = VerticalExaggeration.getHeight(
+        minHeight,
+        scratchVerticalExaggeration,
+        scratchVerticalExaggerationRelativeHeight,
+      );
+      maxHeight = VerticalExaggeration.getHeight(
+        maxHeight,
+        scratchVerticalExaggeration,
+        scratchVerticalExaggerationRelativeHeight,
+      );
+      const heightRange = Math.max(1.0, maxHeight - minHeight);
+      const conservativePadding = Math.max(50.0, heightRange * 0.05);
+      minHeight -= conservativePadding;
+      maxHeight += conservativePadding;
+    }
 
     // Sum using abs() to properly account for negative eleavtions in calculating bounding sphere radius
     sumHeights += Math.abs(minHeight);

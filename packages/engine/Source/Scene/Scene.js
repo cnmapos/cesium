@@ -413,6 +413,14 @@ function Scene(options) {
   this.bakeTerrainExaggeration = false;
 
   /**
+   * Enable debug logs for terrain exaggeration baking.
+   *
+   * @type {boolean}
+   * @default false
+   */
+  this.debugBakeTerrainExaggeration = false;
+
+  /**
    * This property is for debugging only; it is not for production use.
    * <p>
    * A function that determines what commands are executed.  As shown in the examples below,
@@ -2029,12 +2037,17 @@ Scene.prototype.updateFrameState = function () {
   frameState.terrainExaggerationRelativeHeight =
     this.verticalExaggerationRelativeHeight;
   frameState.bakeTerrainExaggeration = this.bakeTerrainExaggeration;
-  frameState.verticalExaggeration = this.bakeTerrainExaggeration
+  frameState.debugBakeTerrainExaggeration = this.debugBakeTerrainExaggeration;
+  frameState.terrainRuntimeExaggeration = this.bakeTerrainExaggeration
     ? 1.0
     : this.verticalExaggeration;
-  frameState.verticalExaggerationRelativeHeight = this.bakeTerrainExaggeration
+  frameState.terrainRuntimeExaggerationRelativeHeight = this
+    .bakeTerrainExaggeration
     ? 0.0
     : this.verticalExaggerationRelativeHeight;
+  frameState.verticalExaggeration = this.verticalExaggeration;
+  frameState.verticalExaggerationRelativeHeight =
+    this.verticalExaggerationRelativeHeight;
 
   if (
     defined(this._specularEnvironmentCubeMap) &&

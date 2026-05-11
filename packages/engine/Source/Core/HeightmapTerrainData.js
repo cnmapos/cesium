@@ -211,6 +211,8 @@ HeightmapTerrainData.prototype.createMesh = function (options) {
   const exaggeration = options.exaggeration ?? 1.0;
   const exaggerationRelativeHeight = options.exaggerationRelativeHeight ?? 0.0;
   const bakeExaggeration = options.bakeExaggeration ?? false;
+  const debugBakeTerrainExaggeration =
+    options.debugBakeTerrainExaggeration ?? false;
   const throttle = options.throttle ?? true;
 
   const ellipsoid = tilingScheme.ellipsoid;
@@ -247,9 +249,13 @@ HeightmapTerrainData.prototype.createMesh = function (options) {
     ellipsoid: ellipsoid,
     skirtHeight: this._skirtHeight,
     isGeographic: tilingScheme.projection instanceof GeographicProjection,
+    x: x,
+    y: y,
+    level: level,
     exaggeration: exaggeration,
     exaggerationRelativeHeight: exaggerationRelativeHeight,
     bakeExaggeration: bakeExaggeration,
+    debugBakeTerrainExaggeration: debugBakeTerrainExaggeration,
     encoding: this._encoding,
   });
 

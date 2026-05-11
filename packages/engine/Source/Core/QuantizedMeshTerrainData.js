@@ -279,6 +279,8 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
   const exaggeration = options.exaggeration ?? 1.0;
   const exaggerationRelativeHeight = options.exaggerationRelativeHeight ?? 0.0;
   const bakeExaggeration = options.bakeExaggeration ?? false;
+  const debugBakeTerrainExaggeration =
+    options.debugBakeTerrainExaggeration ?? false;
   const throttle = options.throttle ?? true;
 
   const ellipsoid = tilingScheme.ellipsoid;
@@ -287,6 +289,16 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
   const createMeshTaskProcessor = throttle
     ? createMeshTaskProcessorThrottle
     : createMeshTaskProcessorNoThrottle;
+
+  if (debugBakeTerrainExaggeration && bakeExaggeration) {
+    console.log("[BakeEx][QuantizedMeshTerrainData.createMesh] schedule", {
+      x: x,
+      y: y,
+      level: level,
+      exaggeration: exaggeration,
+      exaggerationRelativeHeight: exaggerationRelativeHeight,
+    });
+  }
 
   const verticesPromise = createMeshTaskProcessor.scheduleTask({
     minimumHeight: this._minimumHeight,
@@ -306,9 +318,13 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
     rectangle: rectangle,
     relativeToCenter: this._boundingSphere.center,
     ellipsoid: ellipsoid,
+    x: x,
+    y: y,
+    level: level,
     exaggeration: exaggeration,
     exaggerationRelativeHeight: exaggerationRelativeHeight,
     bakeExaggeration: bakeExaggeration,
+    debugBakeTerrainExaggeration: debugBakeTerrainExaggeration,
   });
 
   if (!defined(verticesPromise)) {
@@ -334,8 +350,11 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
     const rtc = result.center;
     const minimumHeight = result.minimumHeight;
     const maximumHeight = result.maximumHeight;
-    const boundingSphere = that._boundingSphere;
-    const obb = that._orientedBoundingBox;
+    const boundingSphere =
+      BoundingSphere.clone(result.boundingSphere) ?? that._boundingSphere;
+    const obb =
+      OrientedBoundingBox.clone(result.orientedBoundingBox) ??
+      that._orientedBoundingBox;
     const occludeePointInScaledSpace =
       Cartesian3.clone(result.occludeePointInScaledSpace) ??
       that._horizonOcclusionPoint;
@@ -364,6 +383,19 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
       result.northIndicesWestToEast,
     );
 
+    // Keep skirt heights consistent with the generated mesh.
+    // Upsampling derives child skirts from these values.
+    that._westSkirtHeight = result.westSkirtHeight;
+    that._southSkirtHeight = result.southSkirtHeight;
+    that._eastSkirtHeight = result.eastSkirtHeight;
+    that._northSkirtHeight = result.northSkirtHeight;
+
+    // Keep terrain data height range in sync with the generated mesh.
+    // Upsampling uses these values to re-quantize child meshes; stale
+    // pre-bake ranges cause visible LOD popping and unstable terrain.
+    that._minimumHeight = minimumHeight;
+    that._maximumHeight = maximumHeight;
+
     // Free memory received from server after mesh is created.
     that._quantizedVertices = undefined;
     that._encodedNormals = undefined;
@@ -377,6 +409,16 @@ QuantizedMeshTerrainData.prototype.createMesh = function (options) {
     that._southIndices = undefined;
     that._eastIndices = undefined;
     that._northIndices = undefined;
+
+    if (debugBakeTerrainExaggeration && bakeExaggeration) {
+      console.log("[BakeEx][QuantizedMeshTerrainData.createMesh] result", {
+        x: x,
+        y: y,
+        level: level,
+        minimumHeight: minimumHeight,
+        maximumHeight: maximumHeight,
+      });
+    }
 
     return that._mesh;
   });

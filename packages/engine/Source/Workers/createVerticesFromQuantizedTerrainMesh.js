@@ -1,4 +1,5 @@
 import AxisAlignedBoundingBox from "../Core/AxisAlignedBoundingBox.js";
+import BoundingSphere from "../Core/BoundingSphere.js";
 import Cartesian2 from "../Core/Cartesian2.js";
 import Cartesian3 from "../Core/Cartesian3.js";
 import Cartographic from "../Core/Cartographic.js";
@@ -8,6 +9,7 @@ import EllipsoidalOccluder from "../Core/EllipsoidalOccluder.js";
 import IndexDatatype from "../Core/IndexDatatype.js";
 import CesiumMath from "../Core/Math.js";
 import Matrix4 from "../Core/Matrix4.js";
+import OrientedBoundingBox from "../Core/OrientedBoundingBox.js";
 import Rectangle from "../Core/Rectangle.js";
 import TerrainEncoding from "../Core/TerrainEncoding.js";
 import TerrainProvider from "../Core/TerrainProvider.js";
@@ -39,6 +41,8 @@ function createVerticesFromQuantizedTerrainMesh(
   transferableObjects,
 ) {
   const quantizedVertices = parameters.quantizedVertices;
+  const debugBakeTerrainExaggeration =
+    parameters.debugBakeTerrainExaggeration === true;
   const quantizedVertexCount = quantizedVertices.length / 3;
   const octEncodedNormals = parameters.octEncodedNormals;
   const edgeVertexCount =
@@ -69,6 +73,21 @@ function createVerticesFromQuantizedTerrainMesh(
 
   const minimumHeight = parameters.minimumHeight;
   const maximumHeight = parameters.maximumHeight;
+  if (
+    debugBakeTerrainExaggeration &&
+    bakeExaggeration &&
+    parameters.level <= 3
+  ) {
+    console.log("[BakeEx][Worker quantized] input", {
+      x: parameters.x,
+      y: parameters.y,
+      level: parameters.level,
+      exaggeration: exaggeration,
+      exaggerationRelativeHeight: exaggerationRelativeHeight,
+      minimumHeight: minimumHeight,
+      maximumHeight: maximumHeight,
+    });
+  }
   const adjustedMinimumHeight = applyBakedExaggeration
     ? getExaggeratedHeight(
         minimumHeight,
@@ -242,17 +261,20 @@ function createVerticesFromQuantizedTerrainMesh(
     },
   );
 
-  let occludeePointInScaledSpace;
-  if (encodedMinimumHeight < 0.0) {
-    // Horizon culling point needs to be recomputed since the tile is at least partly under the ellipsoid.
-    const occluder = new EllipsoidalOccluder(ellipsoid);
-    occludeePointInScaledSpace =
-      occluder.computeHorizonCullingPointPossiblyUnderEllipsoid(
-        center,
-        positions,
-        encodedMinimumHeight,
-      );
-  }
+  const occluder = new EllipsoidalOccluder(ellipsoid);
+  const occludeePointInScaledSpace =
+    occluder.computeHorizonCullingPointPossiblyUnderEllipsoid(
+      center,
+      positions,
+      encodedMinimumHeight,
+    );
+  const boundingSphere = BoundingSphere.fromPoints(positions);
+  const orientedBoundingBox = OrientedBoundingBox.fromRectangle(
+    rectangle,
+    encodedMinimumHeight,
+    encodedMaximumHeight,
+    ellipsoid,
+  );
 
   let hMin = encodedMinimumHeight;
   hMin = Math.min(
@@ -463,7 +485,13 @@ function createVerticesFromQuantizedTerrainMesh(
     center: center,
     minimumHeight: encodedMinimumHeight,
     maximumHeight: encodedMaximumHeight,
+    boundingSphere: boundingSphere,
+    orientedBoundingBox: orientedBoundingBox,
     occludeePointInScaledSpace: occludeePointInScaledSpace,
+    westSkirtHeight: westSkirtHeight,
+    southSkirtHeight: southSkirtHeight,
+    eastSkirtHeight: eastSkirtHeight,
+    northSkirtHeight: northSkirtHeight,
     encoding: encoding,
     indexCountWithoutSkirts: parameters.indices.length,
   };
