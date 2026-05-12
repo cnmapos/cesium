@@ -90,14 +90,14 @@ To release CesiumJS, you'll need access to the following resources. Check with a
    - Ensure each change is in the section for the relevant workspace
    - Check for consistency with spelling, casing, tense, and punctuation
 5. Based on `CHANGES.md`, update each workspace version following the rules of [semantic versioning](https://semver.org/), e.g.,
-   `npm version minor -w @cesium/engine --no-git-tag-version`. This includes `@cesium/sandcastle`.
+   `npm version minor -w @hztx/engine --no-git-tag-version`. This includes `@cesium/sandcastle`.
 
 > [!IMPORTANT]
 >
 > #### Versioning rules
 >
 > - If a workspace incremented a version of any dependencies, at minimum a new patch version of that workspace is required.
-> - Following the above rule, incrementing a workspace version will require an ensuing version bump in dependent workspaces—for example, `CHANGES.md` reports changes only in `@cesium/engine`, but the required version increment for `@cesium/engine` will also require a version increment for `@cesium/widgets`.
+> - Following the above rule, incrementing a workspace version will require an ensuing version bump in dependent workspaces—for example, `CHANGES.md` reports changes only in `@hztx/engine`, but the required version increment for `@hztx/engine` will also require a version increment for `@hztx/widgets`.
 
 <!-- markdownlint-disable MD029 -->
 
@@ -147,8 +147,8 @@ To release CesiumJS, you'll need access to the following resources. Check with a
    - Publish the release
 3. Authenticate your npm account with `npm login`. (The first time you do this, you will need to authorize the machine using `npm adduser`.)
 4. Use `npm publish -w <WORKSPACE>` in the repository root (not the unzipped file directory) to publish the workspaces. Repeat this step for each updated workspace, in the following order:
-   - `npm publish -w @cesium/engine`
-   - `npm publish -w @cesium/widgets`
+   - `npm publish -w @hztx/engine`
+   - `npm publish -w @hztx/widgets`
 5. Publish the top-level `cesium` package to npm by running `npm publish` in the repository root (not the unzipped file directory)
 6. Check out the `cesium.com` branch. Merge the new release tag into the `cesium.com` branch with `git merge origin <tag-name>`. CI will deploy the hosted release, Sandcastle, and the updated doc upon pushing updates to the branch.
 

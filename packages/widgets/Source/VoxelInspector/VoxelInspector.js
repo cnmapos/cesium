@@ -3,7 +3,7 @@ import {
   Check,
   destroyObject,
   getElement,
-} from "@cesium/engine";
+} from "@hztx/engine";
 import knockout from "../ThirdParty/knockout.js";
 import InspectorShared from "../InspectorShared.js";
 import VoxelInspectorViewModel from "./VoxelInspectorViewModel.js";

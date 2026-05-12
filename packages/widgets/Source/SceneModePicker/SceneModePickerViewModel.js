@@ -4,7 +4,7 @@ import {
   DeveloperError,
   EventHelper,
   SceneMode,
-} from "@cesium/engine";
+} from "@hztx/engine";
 import knockout from "../ThirdParty/knockout.js";
 import createCommand from "../createCommand.js";
 

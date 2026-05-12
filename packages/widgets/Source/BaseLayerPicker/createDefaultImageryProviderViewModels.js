@@ -7,7 +7,7 @@ import {
   OpenStreetMapImageryProvider,
   TileMapServiceImageryProvider,
   ArcGisBaseMapType,
-} from "@cesium/engine";
+} from "@hztx/engine";
 import ProviderViewModel from "./ProviderViewModel.js";
 
 /**

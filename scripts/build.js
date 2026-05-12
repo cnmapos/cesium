@@ -18,9 +18,9 @@ import { rimraf } from "rimraf";
 import { mkdirp } from "mkdirp";
 import assert from "node:assert";
 
-// Determines the scope of the workspace packages. If the scope is set to cesium, the workspaces should be @cesium/engine.
+// Determines the scope of the workspace packages. If the scope is set to hztx, the workspaces should be @hztx/engine.
 // This should match the scope of the dependencies of the root level package.json.
-const scope = "cesium";
+const scope = "hztx";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, "..");
@@ -348,7 +348,7 @@ export async function bundleIndexJs(options) {
     format: "esm",
     outfile: path.join(options.outputDirectory, "index.js"),
     // NOTE: doing this requires an importmap defined in the browser but avoids multiple CesiumJS instances
-    external: options.entryPoint.includes("engine") ? [] : ["@cesium/engine"],
+    external: options.entryPoint.includes("engine") ? [] : [`@${scope}/engine`],
   });
 
   if (incremental) {
@@ -665,7 +665,7 @@ const externalResolvePlugin = {
       };
     });
 
-    build.onResolve({ filter: /@cesium/ }, () => {
+    build.onResolve({ filter: new RegExp(`@${scope}/`) }, () => {
       return {
         path: "Cesium",
         namespace: "external-cesium",

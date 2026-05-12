@@ -56,16 +56,16 @@ function formatTimeSinceInSeconds(start) {
 async function generateDevelopmentBuild() {
   const startTime = performance.now();
 
-  // Build @cesium/engine index.js
-  console.log("[1/3] Building @cesium/engine...");
+  // Build @hztx/engine index.js
+  console.log("[1/3] Building @hztx/engine...");
   const engineContexts = await buildEngine({
     incremental: true,
     minify: false,
     write: false,
   });
 
-  // Build @cesium/widgets index.js
-  console.log("[2/3] Building @cesium/widgets...");
+  // Build @hztx/widgets index.js
+  console.log("[2/3] Building @hztx/widgets...");
   const widgetContexts = await buildWidgets({
     incremental: true,
     minify: false,

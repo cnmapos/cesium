@@ -1,4 +1,4 @@
-import { Cartesian2, Cartesian3 } from "@cesium/engine";
+import { Cartesian2, Cartesian3 } from "@hztx/engine";
 
 import { SelectionIndicatorViewModel } from "../../index.js";
 

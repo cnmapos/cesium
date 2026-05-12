@@ -1,4 +1,4 @@
-import { Clock } from "@cesium/engine";
+import { Clock } from "@hztx/engine";
 
 import { Timeline } from "../../index.js";
 

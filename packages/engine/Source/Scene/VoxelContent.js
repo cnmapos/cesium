@@ -1,4 +1,4 @@
-import { destroyObject } from "@cesium/engine";
+import { destroyObject } from "@hztx/engine";
 import Check from "../Core/Check.js";
 import ComponentDatatype from "../Core/ComponentDatatype.js";
 import DeveloperError from "../Core/DeveloperError.js";

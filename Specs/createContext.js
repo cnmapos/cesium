@@ -1,4 +1,4 @@
-import { clone, Context } from "@cesium/engine";
+import { clone, Context } from "@hztx/engine";
 
 import createCanvas from "./createCanvas.js";
 import createFrameState from "./createFrameState.js";

@@ -1,7 +1,7 @@
 # CesiumJS
 
 [![Build Status](https://github.com/CesiumGS/cesium/actions/workflows/dev.yml/badge.svg)](https://github.com/CesiumGS/cesium/actions/workflows/dev.yml)
-[![npm](https://img.shields.io/npm/v/cesium)](https://www.npmjs.com/package/cesium)
+[![npm](https://img.shields.io/npm/v/@hztx/cesium)](https://www.npmjs.com/package/@hztx/cesium)
 [![Docs](https://img.shields.io/badge/docs-online-orange.svg)](https://cesium.com/learn/)
 
 ![Cesium](https://github.com/CesiumGS/cesium/wiki/logos/Cesium_Logo_Color.jpg)
@@ -22,25 +22,25 @@ Visit the [Downloads page](https://cesium.com/downloads/) to download a pre-buil
 
 ### npm & yarn
 
-If you’re building your application using a module bundler such as Webpack, Parcel, or Rollup, you can install CesiumJS via the [`cesium` npm package](https://www.npmjs.com/package/cesium):
+If you’re building your application using a module bundler such as Webpack, Parcel, or Rollup, you can install this fork via the [`@hztx/cesium` npm package](https://www.npmjs.com/package/@hztx/cesium):
 
 ```sh
-npm install cesium --save
+npm install @hztx/cesium --save
 ```
 
 Then, import CesiumJS in your app code. Import individual modules to benefit from tree shaking optimizations through most build tools:
 
 ```js
-import { Viewer } from "cesium";
-import "cesium/Build/Cesium/Widgets/widgets.css";
+import { Viewer } from "@hztx/cesium";
+import "@hztx/cesium/Build/Cesium/Widgets/widgets.css";
 
 const viewer = new Viewer("cesiumContainer");
 ```
 
 In addition to the `cesium` package, CesiumJS is also [distributed as scoped npm packages for better dependency management](https://cesium.com/blog/2022/12/07/modular-structure-in-cesiumjs/):
 
-- [`@cesium/engine`](./packages/engine/README.md) - CesiumJS's core, rendering, and data APIs
-- [`@cesium/widgets`](./packages/widgets/README.md) - A widgets library for use with CesiumJS
+- [`@hztx/engine`](./packages/engine/README.md) - CesiumJS's core, rendering, and data APIs
+- [`@hztx/widgets`](./packages/widgets/README.md) - A widgets library for use with CesiumJS
 
 ### What next?
 

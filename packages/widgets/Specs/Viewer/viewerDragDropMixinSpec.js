@@ -1,4 +1,4 @@
-import { defined, TimeInterval } from "@cesium/engine";
+import { defined, TimeInterval } from "@hztx/engine";
 
 import { viewerDragDropMixin } from "../../index.js";
 

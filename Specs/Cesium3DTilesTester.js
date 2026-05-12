@@ -9,7 +9,7 @@ import {
   Cesium3DTileContentFactory,
   Cesium3DTileset,
   TileBoundingSphere,
-} from "@cesium/engine";
+} from "@hztx/engine";
 
 import pollToPromise from "./pollToPromise.js";
 

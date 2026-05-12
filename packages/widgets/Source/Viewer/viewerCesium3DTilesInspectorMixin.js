@@ -1,4 +1,4 @@
-import { Check } from "@cesium/engine";
+import { Check } from "@hztx/engine";
 import Cesium3DTilesInspector from "../Cesium3DTilesInspector/Cesium3DTilesInspector.js";
 
 /**

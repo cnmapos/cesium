@@ -5,7 +5,7 @@ import {
   GeographicProjection,
   Matrix4,
   Camera,
-} from "@cesium/engine";
+} from "@hztx/engine";
 
 function MockScene(canvas) {
   canvas = canvas ?? {

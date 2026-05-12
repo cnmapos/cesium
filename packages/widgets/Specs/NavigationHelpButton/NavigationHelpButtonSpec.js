@@ -1,4 +1,4 @@
-import { FeatureDetection } from "@cesium/engine";
+import { FeatureDetection } from "@hztx/engine";
 
 import { NavigationHelpButton } from "../../index.js";
 

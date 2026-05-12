@@ -1,4 +1,4 @@
-import { Ellipsoid, Globe, SceneMode } from "@cesium/engine";
+import { Ellipsoid, Globe, SceneMode } from "@hztx/engine";
 
 import { SceneModePickerViewModel } from "../../index.js";
 

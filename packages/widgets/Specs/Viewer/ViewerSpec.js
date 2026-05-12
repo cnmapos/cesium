@@ -20,7 +20,7 @@ import {
   ShadowMode,
   IonGeocodeProviderType,
   IonGeocoderService,
-} from "@cesium/engine";
+} from "@hztx/engine";
 
 import {
   Animation,
