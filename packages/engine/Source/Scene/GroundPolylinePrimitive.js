@@ -180,6 +180,8 @@ function GroundPolylinePrimitive(options) {
   // Used when inserting in an OrderedPrimitiveCollection
   this._zIndex = undefined;
 
+  this._retainedGeometryInstances = undefined;
+
   this._ready = false;
   this._primitive = undefined;
 
@@ -313,6 +315,25 @@ Object.defineProperties(GroundPolylinePrimitive.prototype, {
 GroundPolylinePrimitive.initializeTerrainHeights = function () {
   return ApproximateTerrainHeights.initialize();
 };
+
+function verticalExaggerationMatchesFrameState(geometryInstances, frameState) {
+  if (!defined(geometryInstances)) {
+    return true;
+  }
+  const ex = frameState.verticalExaggeration;
+  const exRel = frameState.verticalExaggerationRelativeHeight;
+  const length = geometryInstances.length;
+  for (let i = 0; i < length; ++i) {
+    const geom = geometryInstances[i].geometry;
+    if (
+      geom._verticalExaggeration !== ex ||
+      geom._verticalExaggerationRelativeHeight !== exRel
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function createShaderProgram(groundPolylinePrimitive, frameState, appearance) {
   const context = frameState.context;
@@ -660,7 +681,11 @@ function updateAndQueueCommands(
  * @exception {DeveloperError} All GeometryInstances must have color attributes to use PolylineColorAppearance with GroundPolylinePrimitive.
  */
 GroundPolylinePrimitive.prototype.update = function (frameState) {
-  if (!defined(this._primitive) && !defined(this.geometryInstances)) {
+  if (
+    !defined(this._primitive) &&
+    !defined(this.geometryInstances) &&
+    !defined(this._retainedGeometryInstances)
+  ) {
     return;
   }
 
@@ -681,10 +706,35 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
 
   const that = this;
   const primitiveOptions = this._primitiveOptions;
-  if (!defined(this._primitive)) {
-    const geometryInstances = Array.isArray(this.geometryInstances)
-      ? this.geometryInstances
+
+  if (
+    defined(this.geometryInstances) &&
+    !defined(this._retainedGeometryInstances)
+  ) {
+    this._retainedGeometryInstances = Array.isArray(this.geometryInstances)
+      ? this.geometryInstances.slice()
       : [this.geometryInstances];
+  }
+
+  const sourceGeometryInstances =
+    this.geometryInstances ?? this._retainedGeometryInstances;
+
+  if (
+    defined(this._primitive) &&
+    !verticalExaggerationMatchesFrameState(sourceGeometryInstances, frameState)
+  ) {
+    this._primitive = this._primitive.destroy();
+    this._primitive = undefined;
+    this._ready = false;
+    if (defined(this._sp)) {
+      this._sp = this._sp.destroy();
+    }
+    this._sp2D = undefined;
+    this._spMorph = undefined;
+  }
+
+  if (!defined(this._primitive)) {
+    const geometryInstances = sourceGeometryInstances;
     const geometryInstancesLength = geometryInstances.length;
     const groundInstances = new Array(geometryInstancesLength);
 
@@ -724,6 +774,10 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
         geometryInstance.geometry,
         frameState.mapProjection,
       );
+      geometryInstance.geometry._verticalExaggeration =
+        frameState.verticalExaggeration;
+      geometryInstance.geometry._verticalExaggerationRelativeHeight =
+        frameState.verticalExaggerationRelativeHeight;
 
       groundInstances[i] = new GeometryInstance({
         geometry: geometryInstance.geometry,

@@ -97,7 +97,7 @@
     "karma-spec-reporter": "^0.0.36",
     "lebab": "^3.2.8",
     "markdownlint-cli": "^0.48.0",
-    "merge-stream": "^2.0.0",
+    "merge-stream": "^2.0.0", 
     "mkdirp": "^3.0.1",
     "node-fetch": "^3.2.10",
     "open": "^11.0.0",

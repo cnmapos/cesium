@@ -716,6 +716,8 @@ describe("Core/GroundPolylineGeometry", function () {
     expect(scratch._ellipsoid.equals(Ellipsoid.UNIT_SPHERE)).toBe(true);
     expect(scratch._scene3DOnly).toBe(true);
     expect(scratch._projectionIndex).toEqual(1);
+    expect(scratch._verticalExaggeration).toEqual(1.0);
+    expect(scratch._verticalExaggerationRelativeHeight).toEqual(0.0);
   });
 
   it("can unpack onto a new instance", function () {
@@ -753,6 +755,8 @@ describe("Core/GroundPolylineGeometry", function () {
     expect(result._ellipsoid.equals(Ellipsoid.UNIT_SPHERE)).toBe(true);
     expect(result._scene3DOnly).toBe(true);
     expect(result._projectionIndex).toEqual(1);
+    expect(result._verticalExaggeration).toEqual(1.0);
+    expect(result._verticalExaggerationRelativeHeight).toEqual(0.0);
   });
 
   it("provides a method for setting projection and ellipsoid", function () {
@@ -870,6 +874,8 @@ describe("Core/GroundPolylineGeometry", function () {
 
   packedInstance.push(0.0); // projection index for Geographic (default)
   packedInstance.push(0.0); // scene3DModeOnly = false
+  packedInstance.push(1.0); // verticalExaggeration (default)
+  packedInstance.push(0.0); // verticalExaggerationRelativeHeight (default)
 
   createPackableSpecs(GroundPolylineGeometry, polyline, packedInstance);
 });

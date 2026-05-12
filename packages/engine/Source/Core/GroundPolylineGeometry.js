@@ -22,6 +22,7 @@ import Matrix3 from "./Matrix3.js";
 import Plane from "./Plane.js";
 import Quaternion from "./Quaternion.js";
 import Rectangle from "./Rectangle.js";
+import VerticalExaggeration from "./VerticalExaggeration.js";
 import WebMercatorProjection from "./WebMercatorProjection.js";
 
 const PROJECTIONS = [GeographicProjection, WebMercatorProjection];
@@ -55,6 +56,8 @@ const WALL_INITIAL_MAX_HEIGHT = 1000.0;
  * @param {number} [options.granularity=9999.0] The distance interval in meters used for interpolating options.points. Defaults to 9999.0 meters. Zero indicates no interpolation.
  * @param {boolean} [options.loop=false] Whether during geometry creation a line segment will be added between the last and first line positions to make this Polyline a loop.
  * @param {ArcType} [options.arcType=ArcType.GEODESIC] The type of line the polyline segments must follow. Valid options are {@link ArcType.GEODESIC} and {@link ArcType.RHUMB}.
+ * @param {number} [options.verticalExaggeration=1.0] Scalar applied with {@link VerticalExaggeration.getHeight} to the shadow volume minimum and maximum terrain heights so the volume matches {@link Scene#verticalExaggeration}.
+ * @param {number} [options.verticalExaggerationRelativeHeight=0.0] Relative height passed to {@link VerticalExaggeration.getHeight} with <code>verticalExaggeration</code>.
  *
  * @exception {DeveloperError} At least two positions are required.
  *
@@ -129,6 +132,16 @@ function GroundPolylineGeometry(options) {
 
   // Used by GroundPolylinePrimitive to signal worker that scenemode is 3D only.
   this._scene3DOnly = false;
+
+  /**
+   * @private
+   */
+  this._verticalExaggeration = options.verticalExaggeration ?? 1.0;
+  /**
+   * @private
+   */
+  this._verticalExaggerationRelativeHeight =
+    options.verticalExaggerationRelativeHeight ?? 0.0;
 }
 
 Object.defineProperties(GroundPolylineGeometry.prototype, {
@@ -148,6 +161,8 @@ Object.defineProperties(GroundPolylineGeometry.prototype, {
         1.0 +
         1.0 +
         Ellipsoid.packedLength +
+        1.0 +
+        1.0 +
         1.0 +
         1.0
       );
@@ -319,6 +334,8 @@ GroundPolylineGeometry.pack = function (value, array, startingIndex) {
 
   array[index++] = value._projectionIndex;
   array[index++] = value._scene3DOnly ? 1.0 : 0.0;
+  array[index++] = value._verticalExaggeration;
+  array[index++] = value._verticalExaggerationRelativeHeight;
 
   return array;
 };
@@ -353,6 +370,8 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
 
   const projectionIndex = array[index++];
   const scene3DOnly = array[index++] === 1.0;
+  const verticalExaggeration = array[index++];
+  const verticalExaggerationRelativeHeight = array[index++];
 
   if (!defined(result)) {
     result = new GroundPolylineGeometry({
@@ -367,6 +386,9 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
   result._ellipsoid = ellipsoid;
   result._projectionIndex = projectionIndex;
   result._scene3DOnly = scene3DOnly;
+  result._verticalExaggeration = verticalExaggeration;
+  result._verticalExaggerationRelativeHeight =
+    verticalExaggerationRelativeHeight;
 
   return result;
 };
@@ -794,6 +816,8 @@ GroundPolylineGeometry.createGeometry = function (groundPolylineGeometry) {
     normalsArray,
     cartographicsArray,
     compute2dAttributes,
+    groundPolylineGeometry._verticalExaggeration,
+    groundPolylineGeometry._verticalExaggerationRelativeHeight,
   );
 };
 
@@ -1061,6 +1085,8 @@ function generateGeometryAttributes(
   normalsArray,
   cartographicsArray,
   compute2dAttributes,
+  verticalExaggeration,
+  verticalExaggerationRelativeHeight,
 ) {
   let i;
   let index;
@@ -1474,8 +1500,16 @@ function generateGeometryAttributes(
       getHeightsRectangle,
       ellipsoid,
     );
-    const minHeight = minMaxHeights.minimumTerrainHeight;
-    const maxHeight = minMaxHeights.maximumTerrainHeight;
+    const minHeight = VerticalExaggeration.getHeight(
+      minMaxHeights.minimumTerrainHeight,
+      verticalExaggeration,
+      verticalExaggerationRelativeHeight,
+    );
+    const maxHeight = VerticalExaggeration.getHeight(
+      minMaxHeights.maximumTerrainHeight,
+      verticalExaggeration,
+      verticalExaggerationRelativeHeight,
+    );
 
     // Sum using abs() to properly account for negative eleavtions in calculating bounding sphere radius
     sumHeights += Math.abs(minHeight);
