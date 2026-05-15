@@ -112,6 +112,7 @@ function PolylineVisualizer(
       i,
     ); // no depth fail appearance
     this._materialBatches[i] = new StaticGeometryPerMaterialBatch(
+      this._scene,
       primitives,
       PolylineMaterialAppearance,
       undefined,
@@ -128,6 +129,7 @@ function PolylineVisualizer(
     ); //depth fail appearance variations
     this._materialBatches[i + numberOfShadowModes] =
       new StaticGeometryPerMaterialBatch(
+        this._scene,
         primitives,
         PolylineMaterialAppearance,
         PolylineColorAppearance,
@@ -145,6 +147,7 @@ function PolylineVisualizer(
       );
     this._materialBatches[i + numberOfShadowModes * 2] =
       new StaticGeometryPerMaterialBatch(
+        this._scene,
         primitives,
         PolylineMaterialAppearance,
         PolylineMaterialAppearance,

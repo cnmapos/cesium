@@ -19,6 +19,7 @@ const defaultOffset = Cartesian3.ZERO;
 const offsetScratch = new Cartesian3();
 
 function Batch(
+  scene,
   primitives,
   appearanceType,
   materialProperty,
@@ -27,6 +28,7 @@ function Batch(
   closed,
   shadows,
 ) {
+  this.scene = scene;
   this.primitives = primitives;
   this.appearanceType = appearanceType;
   this.materialProperty = materialProperty;
@@ -146,6 +148,9 @@ Batch.prototype.update = function (time) {
         this.materialProperty,
         this.material,
       );
+      if (defined(this.scene)) {
+        this.material.update(this.scene.context);
+      }
 
       let depthFailAppearance;
       if (defined(this.depthFailMaterialProperty)) {
@@ -154,6 +159,9 @@ Batch.prototype.update = function (time) {
           this.depthFailMaterialProperty,
           this.depthFailMaterial,
         );
+        if (defined(this.scene)) {
+          this.depthFailMaterial.update(this.scene.context);
+        }
 
         const DepthFailAppearanceType = this.depthFailAppearanceType;
 
@@ -208,6 +216,9 @@ Batch.prototype.update = function (time) {
       this.materialProperty,
       this.material,
     );
+    if (defined(this.scene)) {
+      this.material.update(this.scene.context);
+    }
     this.primitive.appearance.material = this.material;
 
     if (
@@ -219,6 +230,9 @@ Batch.prototype.update = function (time) {
         this.depthFailMaterialProperty,
         this.depthFailMaterial,
       );
+      if (defined(this.scene)) {
+        this.depthFailMaterial.update(this.scene.context);
+      }
       this.primitive.depthFailAppearance.material = this.depthFailMaterial;
     }
 
@@ -390,12 +404,14 @@ Batch.prototype.destroy = function () {
  * @private
  */
 function StaticGeometryPerMaterialBatch(
+  scene,
   primitives,
   appearanceType,
   depthFailAppearanceType,
   closed,
   shadows,
 ) {
+  this._scene = scene;
   this._items = [];
   this._primitives = primitives;
   this._appearanceType = appearanceType;
@@ -415,6 +431,7 @@ StaticGeometryPerMaterialBatch.prototype.add = function (time, updater) {
     }
   }
   const batch = new Batch(
+    this._scene,
     this._primitives,
     this._appearanceType,
     updater.fillMaterialProperty,

@@ -136,6 +136,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     });
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -203,6 +204,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     });
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -243,6 +245,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -298,6 +301,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -379,6 +383,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -431,6 +436,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -484,6 +490,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,
@@ -569,6 +576,7 @@ describe("DataSources/StaticGroundGeometryPerMaterialBatch", function () {
     }
 
     const batch = new StaticGroundGeometryPerMaterialBatch(
+      scene,
       scene.groundPrimitives,
       ClassificationType.BOTH,
       MaterialAppearance,

@@ -112,6 +112,7 @@ DynamicGeometryUpdater.prototype.update = function (time) {
         this._material,
       );
       this._material = material;
+      material.update(this._geometryUpdater._scene.context);
       appearance = new MaterialAppearance({
         material: material,
         translucent: material.isTranslucent(),

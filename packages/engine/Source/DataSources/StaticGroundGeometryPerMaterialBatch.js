@@ -16,6 +16,7 @@ const defaultDistanceDisplayCondition = new DistanceDisplayCondition();
 
 // Encapsulates a Primitive and all the entities that it represents.
 function Batch(
+  scene,
   primitives,
   classificationType,
   appearanceType,
@@ -23,6 +24,7 @@ function Batch(
   usingSphericalTextureCoordinates,
   zIndex,
 ) {
+  this.scene = scene;
   this.primitives = primitives; // scene level primitive collection (each Batch manages its own Primitive from this collection)
   this.classificationType = classificationType;
   this.appearanceType = appearanceType;
@@ -157,6 +159,9 @@ Batch.prototype.update = function (time) {
         this.materialProperty,
         this.material,
       );
+      if (defined(this.scene)) {
+        this.material.update(this.scene.context);
+      }
 
       const AppearanceType = this.appearanceType;
 
@@ -200,6 +205,9 @@ Batch.prototype.update = function (time) {
       this.materialProperty,
       this.material,
     );
+    if (defined(this.scene)) {
+      this.material.update(this.scene.context);
+    }
     this.primitive.appearance.material = this.material;
 
     const updatersWithAttributes = this.updatersWithAttributes.values;
@@ -331,10 +339,12 @@ Batch.prototype.destroy = function () {
  * @private
  */
 function StaticGroundGeometryPerMaterialBatch(
+  scene,
   primitives,
   classificationType,
   appearanceType,
 ) {
+  this._scene = scene;
   this._items = []; // array of Batch objects, each containing representing a primitive and a set of updaters that manage the visual representation of the primitive.
   this._primitives = primitives; // scene level primitive collection
   this._classificationType = classificationType;
@@ -377,6 +387,7 @@ StaticGroundGeometryPerMaterialBatch.prototype.add = function (time, updater) {
   }
   // If a compatible batch wasn't found, create a new batch.
   const batch = new Batch(
+    this._scene,
     this._primitives,
     this._classificationType,
     this._appearanceType,
