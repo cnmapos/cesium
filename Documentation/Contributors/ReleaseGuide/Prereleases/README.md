@@ -10,8 +10,8 @@ Use a prerelease tag—e.g. `ion`—to install a published prerelease.
 
 ```sh
 npm install cesium@<tag>
-npm install @hztx/engine@<tag>
-npm install @hztx/widgets@<tag>
+npm install @hztxi/cesium-engine@<tag>
+npm install @hztxi/cesium-widgets@<tag>
 ```
 
 For example, if the prerelease tag is `ion`, run the following command to install the latest ion prerelease of the top-level `cesium` npm package.
@@ -71,7 +71,7 @@ npm version prerelease --preid <tag> --no-git-tag-version
 
 ## 1.123.1-ion.0 - 2025-07-15
 
-### @hztx/engine
+### @hztxi/cesium-engine
 
 ...
 ```

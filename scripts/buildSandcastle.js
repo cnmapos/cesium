@@ -67,11 +67,11 @@ export async function buildSandcastleApp({
           path: "/js/Cesium.js",
           typesPath: "/js/Cesium.d.ts",
         },
-        "@hztx/engine": {
+        "@hztxi/cesium-engine": {
           path: "/js/engine/index.js",
           typesPath: "/js/engine/index.d.ts",
         },
-        "@hztx/widgets": {
+        "@hztxi/cesium-widgets": {
           path: "/js/widgets/index.js",
           typesPath: "/js/widgets/index.d.ts",
         },
@@ -131,11 +131,11 @@ export async function buildSandcastleApp({
           path: "../../../Source/Cesium.js",
           typesPath: "../../Source/Cesium.d.ts",
         },
-        "@hztx/engine": {
+        "@hztxi/cesium-engine": {
           path: "../../../packages/engine/Build/Unminified/index.js",
           typesPath: "../../packages/engine/index.d.ts",
         },
-        "@hztx/widgets": {
+        "@hztxi/cesium-widgets": {
           path: "../../../packages/widgets/Build/Unminified/index.js",
           typesPath: "../../packages/widgets/index.d.ts",
         },

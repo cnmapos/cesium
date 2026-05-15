@@ -18,9 +18,15 @@ import { rimraf } from "rimraf";
 import { mkdirp } from "mkdirp";
 import assert from "node:assert";
 
-// Determines the scope of the workspace packages. If the scope is set to hztx, the workspaces should be @hztx/engine.
+// Determines the scope of the workspace packages. If the scope is set to hztxi, the workspaces should be @hztxi/cesium-engine.
 // This should match the scope of the dependencies of the root level package.json.
-const scope = "hztx";
+const scope = "hztxi";
+
+/** Published npm name for each workspace folder under `packages/` */
+const workspaceToNpmPackage = {
+  engine: `@${scope}/cesium-engine`,
+  widgets: `@${scope}/cesium-widgets`,
+};
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, "..");
@@ -283,7 +289,7 @@ function generateDeclaration(workspace, file) {
     assignmentName = `_shaders${assignmentName}`;
   }
   assignmentName = assignmentName.replace(/(\.|-)/g, "_");
-  return `export { ${assignmentName} } from '@${scope}/${workspace}';`;
+  return `export { ${assignmentName} } from '${workspaceToNpmPackage[workspace]}';`;
 }
 
 /**
@@ -348,7 +354,9 @@ export async function bundleIndexJs(options) {
     format: "esm",
     outfile: path.join(options.outputDirectory, "index.js"),
     // NOTE: doing this requires an importmap defined in the browser but avoids multiple CesiumJS instances
-    external: options.entryPoint.includes("engine") ? [] : [`@${scope}/engine`],
+    external: options.entryPoint.includes("engine")
+      ? []
+      : [`@${scope}/cesium-engine`],
   });
 
   if (incremental) {

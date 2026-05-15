@@ -1,4 +1,4 @@
-import { defined } from "@hztx/engine";
+import { defined } from "@hztxi/cesium-engine";
 import concatTypedArrays from "./concatTypedArrays.js";
 import MetadataTester from "./MetadataTester.js";
 

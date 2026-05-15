@@ -1,4 +1,4 @@
-import { Check, defined } from "@hztx/engine";
+import { Check, defined } from "@hztxi/cesium-engine";
 
 /**
  * A static class with helper functions used by CesiumInspector, Cesium3DTilesInspector, and VoxelInspector

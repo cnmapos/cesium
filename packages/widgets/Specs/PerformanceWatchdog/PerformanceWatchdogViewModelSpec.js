@@ -1,4 +1,4 @@
-import { defined, getTimestamp, FrameRateMonitor } from "@hztx/engine";
+import { defined, getTimestamp, FrameRateMonitor } from "@hztxi/cesium-engine";
 
 import { PerformanceWatchdogViewModel } from "../../index.js";
 

@@ -3,7 +3,7 @@ import {
   destroyObject,
   DeveloperError,
   getElement,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 import PerformanceWatchdogViewModel from "./PerformanceWatchdogViewModel.js";
 

@@ -1,4 +1,4 @@
-import { Clock, ClockRange, ClockStep, JulianDate } from "@hztx/engine";
+import { Clock, ClockRange, ClockStep, JulianDate } from "@hztxi/cesium-engine";
 import { ClockViewModel } from "../index.js";
 
 describe("Widgets/ClockViewModel", function () {

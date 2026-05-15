@@ -14,7 +14,7 @@ import {
   SampledProperty,
   TimeIntervalCollectionProperty,
   ShadowMode,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 function createGeometryUpdaterSpecs(
   Updater,

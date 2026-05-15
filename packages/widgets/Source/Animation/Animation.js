@@ -4,7 +4,7 @@ import {
   destroyObject,
   DeveloperError,
   getElement,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import subscribeAndEvaluate from "../subscribeAndEvaluate.js";
 
 const svgNS = "http://www.w3.org/2000/svg";

@@ -1,5 +1,5 @@
 {
-  "name": "@hztx/widgets",
+  "name": "@hztxi/cesium-widgets",
   "version": "15.0.0",
   "description": "A widgets library for use with CesiumJS. CesiumJS is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin.",
   "keywords": [
@@ -31,16 +31,16 @@
     "access": "public"
   },
   "dependencies": {
-    "@hztx/engine": "^25.0.0",
+    "@hztxi/cesium-engine": "workspace:*",
     "nosleep.js": "^0.12.0"
   },
   "type": "module",
   "scripts": {
-    "build": "gulp build --workspace @hztx/widgets",
-    "build-ts": "gulp buildTs --workspace @hztx/widgets",
-    "coverage": "gulp coverage --workspace @hztx/widgets",
-    "test": "gulp test --workspace @hztx/widgets",
-    "postversion": "gulp postversion --workspace @hztx/widgets"
+    "build": "gulp build --workspace @hztxi/cesium-widgets",
+    "build-ts": "gulp buildTs --workspace @hztxi/cesium-widgets",
+    "coverage": "gulp coverage --workspace @hztxi/cesium-widgets",
+    "test": "gulp test --workspace @hztxi/cesium-widgets",
+    "postversion": "gulp postversion --workspace @hztxi/cesium-widgets"
   },
   "repository": {
     "type": "git",

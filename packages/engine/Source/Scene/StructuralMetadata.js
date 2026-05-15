@@ -1,4 +1,4 @@
-import { destroyObject } from "@hztx/engine";
+import { destroyObject } from "@hztxi/cesium-engine";
 import Check from "../Core/Check.js";
 import Frozen from "../Core/Frozen.js";
 import defined from "../Core/defined.js";

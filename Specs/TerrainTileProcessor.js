@@ -4,7 +4,7 @@ import {
   GlobeSurfaceTile,
   TerrainState,
   Texture,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 function TerrainTileProcessor(
   frameState,

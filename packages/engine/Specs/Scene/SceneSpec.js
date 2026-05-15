@@ -57,7 +57,7 @@ import createCanvas from "../../../../Specs/createCanvas.js";
 import createScene from "../../../../Specs/createScene.js";
 import pollToPromise from "../../../../Specs/pollToPromise.js";
 import render from "../../../../Specs/render.js";
-import { Cartesian4, Model } from "@hztx/engine";
+import { Cartesian4, Model } from "@hztxi/cesium-engine";
 
 // The size of the property texture
 const textureSizeX = 16;

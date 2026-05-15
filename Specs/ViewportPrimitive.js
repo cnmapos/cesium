@@ -1,4 +1,9 @@
-import { defined, destroyObject, Pass, RenderState } from "@hztx/engine";
+import {
+  defined,
+  destroyObject,
+  Pass,
+  RenderState,
+} from "@hztxi/cesium-engine";
 
 const ViewportPrimitive = function (fragmentShader) {
   this._fs = fragmentShader;

@@ -9,7 +9,7 @@ import {
   Matrix4,
   CustomShader,
   VoxelShapeType,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 
 function formatShaderString(str) {

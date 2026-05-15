@@ -13,7 +13,7 @@ import {
 import MockTerrainProvider from "../../../../Specs/MockTerrainProvider.js";
 import TerrainTileProcessor from "../../../../Specs/TerrainTileProcessor.js";
 import GeographicProjection from "../../Source/Core/GeographicProjection.js";
-import { SceneMode } from "@hztx/engine";
+import { SceneMode } from "@hztxi/cesium-engine";
 
 describe(
   "Core/TerrainPicker",

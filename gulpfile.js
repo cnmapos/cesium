@@ -25,11 +25,49 @@ import {
   createCombinedSpecList,
 } from "./scripts/build.js";
 
-// Determines the scope of the workspace packages. If the scope is set to hztx, the workspaces should be @hztx/engine.
+// Determines the scope of the workspace packages. If the scope is set to hztxi, the workspaces should be @hztxi/cesium-engine.
 // This should match the scope of the dependencies of the root level package.json.
-const scope = "hztx";
+const scope = "hztxi";
+
+/** `packages/*` folder name → published npm package name */
+const workspaceNpmPackages = {
+  engine: `@${scope}/cesium-engine`,
+  widgets: `@${scope}/cesium-widgets`,
+};
+
+/** @type {Record<string, string>} */
+const npmPackageToFolder = {
+  [`@${scope}/cesium-engine`]: "engine",
+  [`@${scope}/cesium-widgets`]: "widgets",
+};
+
+/**
+ * @param {string} wsPath e.g. `packages/engine`
+ * @returns {string|undefined}
+ */
+function workspacePathToNpmName(wsPath) {
+  const folder = wsPath.replace(/^packages\//, "");
+  return workspaceNpmPackages[folder];
+}
+
+/**
+ * @param {string} arg `packages/engine`, `@hztxi/cesium-engine`, or `engine`
+ * @returns {string} `engine` | `widgets`
+ */
+function workspaceArgToFolder(arg) {
+  if (arg.startsWith("@")) {
+    const folder = npmPackageToFolder[arg];
+    if (!folder) {
+      throw new Error(`Unknown workspace package: ${arg}`);
+    }
+    return folder;
+  }
+  return arg.replace(/^packages\//, "");
+}
 
 const require = createRequire(import.meta.url);
+/** Resolves deps that are declared on `packages/engine` (pnpm may not hoist them to repo root). */
+const requireEngine = createRequire(resolve("./packages/engine/package.json"));
 const packageJson = require("./package.json");
 let version = packageJson.version;
 if (/\.0$/.test(version)) {
@@ -39,10 +77,9 @@ const karmaConfigFile = resolve("./Specs/karma.conf.cjs");
 function getWorkspaces(onlyDependencies = false) {
   const dependencies = Object.keys(packageJson.dependencies);
   return onlyDependencies
-    ? packageJson.workspaces.filter((workspace) => {
-        return dependencies.includes(
-          workspace.replace("packages", `@${scope}`),
-        );
+    ? packageJson.workspaces.filter((wsPath) => {
+        const npmName = workspacePathToNpmName(wsPath);
+        return npmName !== undefined && dependencies.includes(npmName);
       })
     : packageJson.workspaces;
 }
@@ -95,9 +132,9 @@ export async function build() {
   // Configure build target.
   const workspace = argv.workspace ? argv.workspace : undefined;
 
-  if (workspace === `@${scope}/engine`) {
+  if (workspace === workspaceNpmPackages.engine) {
     return buildEngine(buildOptions);
-  } else if (workspace === `@${scope}/widgets`) {
+  } else if (workspace === workspaceNpmPackages.widgets) {
     return buildWidgets(buildOptions);
   }
 
@@ -218,9 +255,7 @@ export async function buildTs() {
   // Generate types for passed packages in order.
   const importModules = {};
   for (const workspace of workspaces) {
-    const directory = workspace
-      .replace(`@${scope}/`, "")
-      .replace(`packages/`, "");
+    const directory = workspaceArgToFolder(workspace);
     const workspaceModules = await generateTypeScriptDefinitions(
       directory,
       `packages/${directory}/index.d.ts`,
@@ -258,9 +293,7 @@ export async function tsc() {
   }
 
   for (const workspace of workspaces) {
-    const directory = workspace
-      .replace(`@${scope}/`, "")
-      .replace(`packages/`, "");
+    const directory = workspaceArgToFolder(workspace);
 
     const tsconfigPath = `packages/${directory}/tsconfig.json`;
     if (existsSync(tsconfigPath)) {
@@ -333,21 +366,21 @@ async function clocSource() {
 export async function prepare() {
   // Copy Draco3D files from node_modules into Source
   copyFileSync(
-    "node_modules/draco3d/draco_decoder.wasm",
+    requireEngine.resolve("draco3d/draco_decoder.wasm"),
     "packages/engine/Source/ThirdParty/draco_decoder.wasm",
   );
   // Copy Gaussian Splatting utilities into Source
   copyFileSync(
-    "node_modules/@cesium/wasm-splats/wasm_splats_bg.wasm",
+    requireEngine.resolve("@cesium/wasm-splats/wasm_splats_bg.wasm"),
     "packages/engine/Source/ThirdParty/wasm_splats_bg.wasm",
   );
   // Copy zip.js worker and wasm files to Source/ThirdParty
   copyFileSync(
-    "node_modules/@zip.js/zip.js/dist/zip-web-worker.js",
+    requireEngine.resolve("@zip.js/zip.js/dist/zip-web-worker.js"),
     "packages/engine/Source/ThirdParty/Workers/zip-web-worker.js",
   );
   copyFileSync(
-    "node_modules/@zip.js/zip.js/dist/zip-module.wasm",
+    requireEngine.resolve("@zip.js/zip.js/dist/zip-module.wasm"),
     "packages/engine/Source/ThirdParty/zip-module.wasm",
   );
 
@@ -461,11 +494,12 @@ export const release = gulp.series(
 );
 
 export const postversion = async function () {
-  const workspace = argv.workspace;
-  if (!workspace) {
+  const workspaceArg = argv.workspace;
+  if (!workspaceArg) {
     return;
   }
-  const directory = workspace.replaceAll(`@${scope}/`, ``);
+  const directory = workspaceArgToFolder(workspaceArg);
+  const npmName = workspaceNpmPackages[directory];
   const workspacePackageJson = require(`./packages/${directory}/package.json`);
   const version = workspacePackageJson.version;
 
@@ -481,16 +515,14 @@ export const postversion = async function () {
       return;
     }
     // Ensure that we only update workspaces where the dependency to the updated workspace already exists.
-    const packageJson = require(packageJsonPath);
-    if (!Object.hasOwn(packageJson.dependencies, workspace)) {
-      console.log(
-        `Skipping update for ${workspace} as it is not a dependency.`,
-      );
+    const pkgJson = require(packageJsonPath);
+    if (!Object.hasOwn(pkgJson.dependencies, npmName)) {
+      console.log(`Skipping update for ${npmName} as it is not a dependency.`);
       return;
     }
     // Update the version for the updated workspace.
-    packageJson.dependencies[workspace] = `^${version}`;
-    await writeFile(packageJsonPath, JSON.stringify(packageJson, undefined, 2));
+    pkgJson.dependencies[npmName] = `^${version}`;
+    await writeFile(packageJsonPath, JSON.stringify(pkgJson, undefined, 2));
   });
   return Promise.all(promises);
 };
@@ -763,7 +795,7 @@ export async function runCoverage(options) {
 export async function coverage() {
   let workspace = argv.workspace;
   if (workspace) {
-    workspace = workspace.replaceAll(`@${scope}/`, ``);
+    workspace = workspaceArgToFolder(workspace);
   }
 
   if (workspace === "engine") {
@@ -820,7 +852,7 @@ export async function test() {
 
   let workspace = argv.workspace;
   if (workspace) {
-    workspace = workspace.replaceAll(`@${scope}/`, ``);
+    workspace = workspaceArgToFolder(workspace);
   }
 
   if (!isProduction && !release) {
@@ -1049,20 +1081,20 @@ function generateTypeScriptDefinitions(
 
   if (importModules) {
     let imports = "";
-    Object.keys(importModules).forEach((workspace) => {
-      const workspaceModules = Array.from(importModules[workspace]).filter(
+    Object.keys(importModules).forEach((folder) => {
+      const workspaceModules = Array.from(importModules[folder]).filter(
         (importModule) => source.indexOf(importModule) !== -1,
       );
       imports += `import { ${workspaceModules.join(
         ",\n",
-      )} } from "@${scope}/${workspace}";\n`;
+      )} } from "${workspaceNpmPackages[folder]}";\n`;
     });
     source = imports + source;
   }
 
   // Wrap the source to actually be inside of a declared cesium module
   // and add any workaround and private utility types.
-  source = `declare module "@${scope}/${workspaceName}" {
+  source = `declare module "${workspaceNpmPackages[workspaceName]}" {
 ${source}
 }
 `;

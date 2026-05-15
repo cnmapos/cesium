@@ -6,7 +6,7 @@ import {
   defined,
   DeveloperError,
   JulianDate,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 import knockout from "../ThirdParty/knockout.js";
 import createCommand from "../createCommand.js";

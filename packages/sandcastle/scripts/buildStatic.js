@@ -84,8 +84,8 @@ export function createSandcastleConfig({
   });
 
   checkForImport(imports, "cesium");
-  checkForImport(imports, "@hztx/engine");
-  checkForImport(imports, "@hztx/widgets");
+  checkForImport(imports, "@hztxi/cesium-engine");
+  checkForImport(imports, "@hztxi/cesium-widgets");
   if (imports["Sandcastle"]) {
     throw new Error(
       "Don't specify the Sandcastle import this is taken care of internally",

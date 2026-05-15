@@ -5,7 +5,7 @@ import {
   defined,
   destroyObject,
   getElement,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 import subscribeAndEvaluate from "../subscribeAndEvaluate.js";
 import InfoBoxViewModel from "./InfoBoxViewModel.js";

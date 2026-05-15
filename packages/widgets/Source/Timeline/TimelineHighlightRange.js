@@ -1,4 +1,4 @@
-import { JulianDate } from "@hztx/engine";
+import { JulianDate } from "@hztxi/cesium-engine";
 
 /**
  * @private

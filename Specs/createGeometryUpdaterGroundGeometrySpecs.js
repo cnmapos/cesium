@@ -9,7 +9,7 @@ import {
   GroundPrimitive,
   HeightReference,
   PrimitiveCollection,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 function createGeometryUpdaterGroundGeometrySpecs(
   Updater,
