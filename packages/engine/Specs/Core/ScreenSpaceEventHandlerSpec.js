@@ -1861,4 +1861,62 @@ describe("Core/ScreenSpaceEventHandler", function () {
       element.addEventListener.calls.count(),
     );
   });
+
+  describe("CSS transform scaling", function () {
+    let scaledElement;
+    let scaledHandler;
+
+    beforeEach(function () {
+      scaledElement = document.createElement("div");
+      scaledElement.style.position = "absolute";
+      scaledElement.style.top = "0";
+      scaledElement.style.left = "0";
+      scaledElement.style.width = "200px";
+      scaledElement.style.height = "200px";
+      scaledElement.style.transformOrigin = "left top";
+      scaledElement.style.transform = "scale(0.5)";
+      scaledElement.disableRootEvents = true;
+      document.body.appendChild(scaledElement);
+
+      if (usePointerEvents) {
+        spyOn(scaledElement, "setPointerCapture");
+      }
+
+      scaledHandler = new ScreenSpaceEventHandler(scaledElement);
+    });
+
+    afterEach(function () {
+      scaledHandler = !scaledHandler.isDestroyed() && scaledHandler.destroy();
+      document.body.removeChild(scaledElement);
+    });
+
+    it("maps pointer position from transformed bounding rect to client coordinates", function () {
+      const rect = scaledElement.getBoundingClientRect();
+      const clientWidth = scaledElement.clientWidth;
+      const clientHeight = scaledElement.clientHeight;
+
+      expect(clientWidth).toEqual(200);
+      expect(clientHeight).toEqual(200);
+      expect(rect.width).toBeLessThan(199.5);
+      expect(rect.width).toBeGreaterThan(99.5);
+
+      const action = createCloningSpy("action");
+      scaledHandler.setInputAction(action, ScreenSpaceEventType.LEFT_DOWN);
+
+      const centerX = rect.left + rect.width * 0.5;
+      const centerY = rect.top + rect.height * 0.5;
+      simulateMouseDown(scaledElement, {
+        clientX: centerX,
+        clientY: centerY,
+        button: MouseButton.LEFT,
+      });
+
+      expect(action.calls.count()).toEqual(1);
+      const position = action.calls.mostRecent().args[0].position;
+      expect(position.x).toBeGreaterThan(99.0);
+      expect(position.x).toBeLessThan(101.0);
+      expect(position.y).toBeGreaterThan(99.0);
+      expect(position.y).toBeLessThan(101.0);
+    });
+  });
 });

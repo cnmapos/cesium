@@ -6,6 +6,7 @@
 
 #### Fixes :wrench:
 
+- Fixed `ScreenSpaceEventHandler` reporting incorrect positions when the target element is visually scaled with CSS (for example `transform: scale`), so camera and picking use the same coordinate system as `canvas.clientWidth` / `clientHeight`.
 - Fixed a bug causing `BufferPointCollection` to not update after changes to point positions. [#13465](https://github.com/CesiumGS/cesium/pull/13465)
 
 ## 1.141 - 2026-05-01

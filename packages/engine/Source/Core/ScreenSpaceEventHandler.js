@@ -19,6 +19,25 @@ function getPosition(screenSpaceEventHandler, event, result) {
   const rect = element.getBoundingClientRect();
   result.x = event.clientX - rect.left;
   result.y = event.clientY - rect.top;
+
+  // When CSS transforms (e.g. transform: scale) change the rendered size without
+  // changing layout clientWidth/clientHeight, event offsets are in "bounding rect"
+  // space while the rest of Cesium (Camera#getPickRay, picking, etc.) expects
+  // coordinates in clientWidth/clientHeight space. Map between the two.
+  const rectWidth = rect.width;
+  const rectHeight = rect.height;
+  const clientWidth = element.clientWidth;
+  const clientHeight = element.clientHeight;
+  if (
+    rectWidth > 0.0 &&
+    rectHeight > 0.0 &&
+    clientWidth > 0 &&
+    clientHeight > 0
+  ) {
+    result.x = (result.x * clientWidth) / rectWidth;
+    result.y = (result.y * clientHeight) / rectHeight;
+  }
+
   return result;
 }
 
