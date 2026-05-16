@@ -44,6 +44,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
 
   it("handles shared material being invalidated with geometry", function () {
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,
@@ -126,6 +127,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
     });
 
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,
@@ -188,6 +190,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
     });
 
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,
@@ -222,6 +225,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
 
   it("handles shared material being invalidated for polyline", function () {
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       PolylineMaterialAppearance,
       undefined,
@@ -301,6 +305,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
     });
 
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       PolylineMaterialAppearance,
       PolylineColorAppearance,
@@ -335,6 +340,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
 
   it("shows only one primitive while rebuilding primitive", function () {
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,
@@ -411,6 +417,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
 
   it("removes all updaters", function () {
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,
@@ -477,6 +484,7 @@ describe("DataSources/StaticGeometryPerMaterialBatch", function () {
 
   it("has correct show attribute after rebuilding primitive", function () {
     const batch = new StaticGeometryPerMaterialBatch(
+      scene,
       scene.primitives,
       MaterialAppearance,
       undefined,

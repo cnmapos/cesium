@@ -94,6 +94,7 @@ function GeometryVisualizer(
       );
 
     this._closedMaterialBatches[i] = new StaticGeometryPerMaterialBatch(
+      this._scene,
       primitives,
       MaterialAppearance,
       undefined,
@@ -103,6 +104,7 @@ function GeometryVisualizer(
     );
     this._closedMaterialBatches[numberOfShadowModes + i] =
       new StaticGeometryPerMaterialBatch(
+        this._scene,
         primitives,
         MaterialAppearance,
         undefined,
@@ -130,6 +132,7 @@ function GeometryVisualizer(
       );
 
     this._openMaterialBatches[i] = new StaticGeometryPerMaterialBatch(
+      this._scene,
       primitives,
       MaterialAppearance,
       undefined,
@@ -139,6 +142,7 @@ function GeometryVisualizer(
     );
     this._openMaterialBatches[numberOfShadowModes + i] =
       new StaticGeometryPerMaterialBatch(
+        this._scene,
         primitives,
         MaterialAppearance,
         undefined,
@@ -156,6 +160,7 @@ function GeometryVisualizer(
     for (i = 0; i < numberOfClassificationTypes; ++i) {
       groundMaterialBatches.push(
         new StaticGroundGeometryPerMaterialBatch(
+          this._scene,
           groundPrimitives,
           i,
           MaterialAppearance,

@@ -115,6 +115,15 @@ describe(
       });
     }
 
+    function imageTextureFinishedAsynchronousLoad(material) {
+      const tex = material._textures["image"];
+      return (
+        defined(tex) &&
+        tex !== material._defaultTexture &&
+        tex !== scene.context.defaultTransparentTexture
+      );
+    }
+
     function verifyMaterial(type) {
       describe(`${type} built-in material`, function () {
         beforeEach(function () {
@@ -738,7 +747,7 @@ describe(
       material.uniforms.image = "./Data/Images/Green.png";
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         renderMaterial(material, true, function (rgba) {
           expect(rgba).toEqual([0, 255, 0, 255]);
@@ -759,7 +768,7 @@ describe(
       material.uniforms.image = "./Data/Images/Green.png";
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         renderMaterial(material, true, function (rgba) {
           expect(rgba).toEqual([0, 255, 0, 255]);
@@ -775,7 +784,7 @@ describe(
 
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         renderMaterial(material, true, function (rgba) {
           expect(rgba).toEqual([0, 255, 0, 255]);
@@ -795,7 +804,7 @@ describe(
 
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         renderMaterial(material, true, function (rgba) {
           expect(rgba).toEqual([0, 255, 0, 255]);
@@ -816,7 +825,7 @@ describe(
 
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         greenTextureId = material._textures["image"].id;
         renderMaterial(material, true, function (rgba) {
@@ -843,7 +852,7 @@ describe(
 
       return pollToPromise(function () {
         renderMaterial(material, true);
-        return material._textures["image"] !== material._defaultTexture;
+        return imageTextureFinishedAsynchronousLoad(material);
       }).then(function () {
         greenTextureId = material._textures["image"].id;
         renderMaterial(material, true, function (rgba) {

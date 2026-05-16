@@ -342,6 +342,7 @@ function Context(canvas, options) {
   // default emissive texture has a value of (0, 0, 0)
   // default normal texture is +z which is encoded as (0.5, 0.5, 1)
   this._defaultTexture = undefined;
+  this._defaultTransparentTexture = undefined;
   this._defaultEmissiveTexture = undefined;
   this._defaultNormalTexture = undefined;
   this._defaultCubeMap = undefined;
@@ -1033,6 +1034,30 @@ Object.defineProperties(Context.prototype, {
     },
   },
   /**
+   * A 1x1 RGBA texture initialized to [0, 0, 0, 0]. Used as a placeholder for
+   * image uniforms while asynchronous textures are downloaded so geometry does not
+   * briefly appear filled with white.
+   * @memberof Context.prototype
+   * @type {Texture}
+   */
+  defaultTransparentTexture: {
+    get: function () {
+      if (this._defaultTransparentTexture === undefined) {
+        this._defaultTransparentTexture = new Texture({
+          context: this,
+          source: {
+            width: 1,
+            height: 1,
+            arrayBufferView: new Uint8Array([0, 0, 0, 0]),
+          },
+          flipY: false,
+        });
+      }
+
+      return this._defaultTransparentTexture;
+    },
+  },
+  /**
    * A 1x1 RGB texture initialized to [0, 0, 0] representing a material that is
    * not emissive. This can be used as a placeholder texture for emissive
    * textures while other textures are downloaded.
@@ -1714,6 +1739,9 @@ Context.prototype.destroy = function () {
   this._shaderCache = this._shaderCache.destroy();
   this._textureCache = this._textureCache.destroy();
   this._defaultTexture = this._defaultTexture && this._defaultTexture.destroy();
+  this._defaultTransparentTexture =
+    this._defaultTransparentTexture &&
+    this._defaultTransparentTexture.destroy();
   this._defaultEmissiveTexture =
     this._defaultEmissiveTexture && this._defaultEmissiveTexture.destroy();
   this._defaultNormalTexture =

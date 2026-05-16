@@ -326,6 +326,7 @@ function Material(options) {
   this._updateFunctions = [];
 
   this._defaultTexture = undefined;
+  this._transparentPlaceholderTexture = undefined;
 
   /**
    * Any and all promises that are created when initializing the material.
@@ -530,6 +531,7 @@ Material.prototype.isTranslucent = function () {
  */
 Material.prototype.update = function (context) {
   this._defaultTexture = context.defaultTexture;
+  this._transparentPlaceholderTexture = context.defaultTransparentTexture;
 
   let i;
   let uniformId;
@@ -582,7 +584,10 @@ Material.prototype.update = function (context) {
     // This will ensure a smooth swap of textures and prevent the default texture
     // from appearing for a few frames.
     const oldTexture = this._textures[uniformId];
-    if (defined(oldTexture) && oldTexture !== this._defaultTexture) {
+    if (
+      defined(oldTexture) &&
+      !isContextOwnedPlaceholderTexture(this, oldTexture)
+    ) {
       oldTexture.destroy();
     }
 
@@ -676,7 +681,7 @@ Material.prototype.destroy = function () {
   for (const texture in textures) {
     if (textures.hasOwnProperty(texture)) {
       const instance = textures[texture];
-      if (instance !== this._defaultTexture) {
+      if (!isContextOwnedPlaceholderTexture(this, instance)) {
         instance.destroy();
       }
     }
@@ -895,6 +900,13 @@ const matrixMap = {
 
 const ktx2Regex = /\.ktx2$/i;
 
+function isContextOwnedPlaceholderTexture(material, texture) {
+  return (
+    texture === material._defaultTexture ||
+    texture === material._transparentPlaceholderTexture
+  );
+}
+
 function createTexture2DUpdateFunction(uniformId) {
   let oldUniformValue;
   return function (material, context) {
@@ -946,7 +958,7 @@ function createTexture2DUpdateFunction(uniformId) {
     if (uniformValue instanceof Texture && uniformValue !== texture) {
       material._texturePaths[uniformId] = undefined;
       const tmp = material._textures[uniformId];
-      if (defined(tmp) && tmp !== material._defaultTexture) {
+      if (defined(tmp) && !isContextOwnedPlaceholderTexture(material, tmp)) {
         tmp.destroy();
       }
       material._textures[uniformId] = uniformValue;
@@ -965,7 +977,7 @@ function createTexture2DUpdateFunction(uniformId) {
       // If the newly-assigned texture is the default texture,
       // we don't need to wait for a new image to load before destroying
       // the old texture.
-      if (texture !== material._defaultTexture) {
+      if (!isContextOwnedPlaceholderTexture(material, texture)) {
         texture.destroy();
       }
       texture = undefined;
@@ -973,7 +985,28 @@ function createTexture2DUpdateFunction(uniformId) {
     }
 
     if (!defined(texture)) {
-      texture = material._textures[uniformId] = material._defaultTexture;
+      const useTransparentImagePlaceholder =
+        material.type === Material.ImageType &&
+        uniformId === "image" &&
+        !uniformValueIsDefaultImage;
+      texture = material._textures[uniformId] = useTransparentImagePlaceholder
+        ? context.defaultTransparentTexture
+        : material._defaultTexture;
+
+      uniformDimensionsName = `${uniformId}Dimensions`;
+      if (uniforms.hasOwnProperty(uniformDimensionsName)) {
+        uniformDimensions = uniforms[uniformDimensionsName];
+        uniformDimensions.x = texture._width;
+        uniformDimensions.y = texture._height;
+      }
+    } else if (
+      material.type === Material.ImageType &&
+      uniformId === "image" &&
+      !uniformValueIsDefaultImage &&
+      texture === material._defaultTexture
+    ) {
+      texture = material._textures[uniformId] =
+        context.defaultTransparentTexture;
 
       uniformDimensionsName = `${uniformId}Dimensions`;
       if (uniforms.hasOwnProperty(uniformDimensionsName)) {
@@ -1061,7 +1094,10 @@ function loadTexture2DImageForUniform(material, uniformId) {
     .catch(function (error) {
       material._initializationError = error;
       const texture = material._textures[uniformId];
-      if (defined(texture) && texture !== material._defaultTexture) {
+      if (
+        defined(texture) &&
+        !isContextOwnedPlaceholderTexture(material, texture)
+      ) {
         texture.destroy();
       }
       material._textures[uniformId] = material._defaultTexture;
@@ -1440,7 +1476,15 @@ Material._materialCache.addMaterial(Material.ImageType, {
     },
   },
   translucent: function (material) {
-    return material.uniforms.color.alpha < 1.0;
+    if (material.uniforms.color.alpha < 1.0) {
+      return true;
+    }
+    const tex = material._textures.image;
+    return (
+      defined(tex) &&
+      defined(material._transparentPlaceholderTexture) &&
+      tex === material._transparentPlaceholderTexture
+    );
   },
 });
 
