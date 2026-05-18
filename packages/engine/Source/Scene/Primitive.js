@@ -485,7 +485,14 @@ function getCommonPerInstanceAttributeNames(instances) {
   const length = instances.length;
 
   const attributesInAllInstances = [];
+  if (length === 0 || !defined(instances[0])) {
+    return attributesInAllInstances;
+  }
+
   const attributes0 = instances[0].attributes;
+  if (!defined(attributes0)) {
+    return attributesInAllInstances;
+  }
   let name;
 
   for (name in attributes0) {
@@ -495,7 +502,13 @@ function getCommonPerInstanceAttributeNames(instances) {
 
       // Does this same attribute exist in all instances?
       for (let i = 1; i < length; ++i) {
-        const otherAttribute = instances[i].attributes[name];
+        const otherInstance = instances[i];
+        const otherAttributes = defined(otherInstance)
+          ? otherInstance.attributes
+          : undefined;
+        const otherAttribute = defined(otherAttributes)
+          ? otherAttributes[name]
+          : undefined;
 
         if (
           !defined(otherAttribute) ||
@@ -537,11 +550,14 @@ function getAttributeValue(value) {
 
 function createBatchTable(primitive, context) {
   const geometryInstances = primitive.geometryInstances;
+  if (!defined(geometryInstances)) {
+    return;
+  }
   const instances = Array.isArray(geometryInstances)
     ? geometryInstances
     : [geometryInstances];
   const numberOfInstances = instances.length;
-  if (numberOfInstances === 0) {
+  if (numberOfInstances === 0 || !defined(instances[0])) {
     return;
   }
 
@@ -2108,6 +2124,9 @@ Primitive.prototype.update = function (frameState) {
   const context = frameState.context;
   if (!defined(this._batchTable)) {
     createBatchTable(this, context);
+  }
+  if (!defined(this._batchTable)) {
+    return;
   }
   if (this._batchTable.attributes.length > 0) {
     if (ContextLimits.maximumVertexTextureImageUnits === 0) {

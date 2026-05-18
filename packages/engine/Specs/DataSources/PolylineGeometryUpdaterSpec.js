@@ -212,6 +212,27 @@ describe(
       expect(updater.isDynamic).toBe(true);
     });
 
+    it("CallbackProperty for positions with isConstant true is still dynamic", function () {
+      const entity = new Entity();
+      const polyline = new PolylineGraphics();
+      entity.polyline = polyline;
+      polyline.show = new ConstantProperty(true);
+      polyline.width = new ConstantProperty(1.0);
+      polyline.material = new ColorMaterialProperty(Color.RED);
+      polyline.granularity = new ConstantProperty(0.001);
+      polyline.clampToGround = new ConstantProperty(false);
+      polyline.positions = new CallbackProperty(function () {
+        return [
+          Cartesian3.fromDegrees(0, 0, 0),
+          Cartesian3.fromDegrees(1, 0, 0),
+        ];
+      }, true);
+
+      const updater = new PolylineGeometryUpdater(entity, scene);
+      expect(updater.isDynamic).toBe(true);
+      updater.destroy();
+    });
+
     it("A time-varying arcType causes geometry to be dynamic", function () {
       const entity = createBasicPolyline();
       const updater = new PolylineGeometryUpdater(entity, scene);

@@ -24,6 +24,7 @@ import PolylineColorAppearance from "../Scene/PolylineColorAppearance.js";
 import PolylineMaterialAppearance from "../Scene/PolylineMaterialAppearance.js";
 import ShadowMode from "../Scene/ShadowMode.js";
 import BoundingSphereState from "./BoundingSphereState.js";
+import CallbackProperty from "./CallbackProperty.js";
 import ColorMaterialProperty from "./ColorMaterialProperty.js";
 import ConstantProperty from "./ConstantProperty.js";
 import MaterialProperty from "./MaterialProperty.js";
@@ -528,7 +529,11 @@ PolylineGeometryUpdater.prototype._onEntityPropertyChanged = function (
   const clampToGround = polyline.clampToGround;
   const granularity = polyline.granularity;
 
+  // CallbackProperty's isConstant means "same value at any simulation time", but the callback
+  // may still read mutable external state (e.g. live GPS). Those polylines must use the dynamic
+  // updater so positions are sampled every frame at the current clock time.
   if (
+    positionsProperty instanceof CallbackProperty ||
     !positionsProperty.isConstant ||
     !Property.isConstant(width) ||
     !Property.isConstant(arcType) ||
@@ -672,6 +677,21 @@ function getLine(dynamicGeometryUpdater) {
   return line;
 }
 
+function invalidateGroundPolylinePrimitiveGeometry(groundPolylinePrimitive) {
+  groundPolylinePrimitive._retainedGeometryInstances = undefined;
+  if (defined(groundPolylinePrimitive._primitive)) {
+    groundPolylinePrimitive._primitive =
+      groundPolylinePrimitive._primitive.destroy();
+    groundPolylinePrimitive._primitive = undefined;
+  }
+  groundPolylinePrimitive._ready = false;
+  if (defined(groundPolylinePrimitive._sp)) {
+    groundPolylinePrimitive._sp = groundPolylinePrimitive._sp.destroy();
+  }
+  groundPolylinePrimitive._sp2D = undefined;
+  groundPolylinePrimitive._spMorph = undefined;
+}
+
 DynamicGeometryUpdater.prototype.update = function (time) {
   const geometryUpdater = this._geometryUpdater;
   const entity = geometryUpdater._entity;
@@ -706,21 +726,30 @@ DynamicGeometryUpdater.prototype.update = function (time) {
 
   const groundPrimitives = this._groundPrimitives;
 
-  if (defined(this._groundPolylinePrimitive)) {
-    groundPrimitives.remove(this._groundPolylinePrimitive); // destroys by default
-    this._groundPolylinePrimitive = undefined;
-  }
-
   if (geometryUpdater.clampToGround) {
     if (
       !entity.isShowing ||
       !entity.isAvailable(time) ||
       !Property.getValueOrDefault(polyline._show, time, true)
     ) {
+      if (defined(this._groundPolylinePrimitive)) {
+        groundPrimitives.remove(this._groundPolylinePrimitive);
+        this._groundPolylinePrimitive = undefined;
+      }
+      if (defined(this._line)) {
+        this._line.show = false;
+      }
       return;
     }
 
     if (!defined(positions) || positions.length < 2) {
+      if (defined(this._groundPolylinePrimitive)) {
+        groundPrimitives.remove(this._groundPolylinePrimitive);
+        this._groundPolylinePrimitive = undefined;
+      }
+      if (defined(this._line)) {
+        this._line.show = false;
+      }
       return;
     }
 
@@ -741,22 +770,43 @@ DynamicGeometryUpdater.prototype.update = function (time) {
       this._material = material;
     }
 
-    this._groundPolylinePrimitive = groundPrimitives.add(
-      new GroundPolylinePrimitive({
-        geometryInstances: geometryUpdater.createFillGeometryInstance(time),
-        appearance: appearance,
-        classificationType:
-          geometryUpdater.classificationTypeProperty.getValue(time),
-        asynchronous: false,
-      }),
-      Property.getValueOrUndefined(geometryUpdater.zIndex, time),
-    );
+    const geometryInstance = geometryUpdater.createFillGeometryInstance(time);
+    const classificationType =
+      geometryUpdater.classificationTypeProperty.getValue(time);
+    const zIndex = Property.getValueOrUndefined(geometryUpdater.zIndex, time);
+    const zIndexKey = zIndex ?? 0;
+
+    if (!defined(this._groundPolylinePrimitive)) {
+      this._groundPolylinePrimitive = groundPrimitives.add(
+        new GroundPolylinePrimitive({
+          geometryInstances: geometryInstance,
+          appearance: appearance,
+          classificationType: classificationType,
+          asynchronous: false,
+        }),
+        zIndex,
+      );
+    } else {
+      const groundPolylinePrimitive = this._groundPolylinePrimitive;
+      if (groundPolylinePrimitive._zIndex !== zIndexKey) {
+        groundPrimitives.set(groundPolylinePrimitive, zIndexKey);
+      }
+      groundPolylinePrimitive.geometryInstances = geometryInstance;
+      invalidateGroundPolylinePrimitiveGeometry(groundPolylinePrimitive);
+      groundPolylinePrimitive.appearance = appearance;
+      groundPolylinePrimitive.classificationType = classificationType;
+    }
 
     // Hide the polyline in the collection, if any
     if (defined(this._line)) {
       this._line.show = false;
     }
     return;
+  }
+
+  if (defined(this._groundPolylinePrimitive)) {
+    groundPrimitives.remove(this._groundPolylinePrimitive);
+    this._groundPolylinePrimitive = undefined;
   }
 
   const line = getLine(this);
