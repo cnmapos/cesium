@@ -6,6 +6,6 @@
     "verify": "node verify-resolution.mjs"
   },
   "dependencies": {
-    "cesium": "npm:@hztxi/cesium@^1.141.1"
+    "cesium": "npm:@hztxi/cesium@^1.141.2"
   }
 }
