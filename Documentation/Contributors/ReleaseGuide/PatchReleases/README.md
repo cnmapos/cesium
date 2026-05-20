@@ -53,7 +53,7 @@ npm version patch --no-git-tag-version
 
 ## 1.123.1 - 2025-07-15
 
-### @hztx/engine
+### @hztxi/cesium-engine
 
 ...
 ```

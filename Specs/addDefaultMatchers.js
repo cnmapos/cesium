@@ -11,7 +11,7 @@ import {
   ShaderProgram,
   VertexArray,
   Math as CesiumMath,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import equals from "./equals.js";
 
 function createMissingFunctionMessageFunction(

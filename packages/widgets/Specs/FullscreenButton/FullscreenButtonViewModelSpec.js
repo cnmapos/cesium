@@ -1,4 +1,4 @@
-import { Fullscreen } from "@hztx/engine";
+import { Fullscreen } from "@hztxi/cesium-engine";
 
 import { FullscreenButtonViewModel } from "../../index.js";
 

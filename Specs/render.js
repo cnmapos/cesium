@@ -1,4 +1,4 @@
-import { defined, Intersect, Pass, SceneMode } from "@hztx/engine";
+import { defined, Intersect, Pass, SceneMode } from "@hztxi/cesium-engine";
 
 function executeCommands(frameState, commands) {
   let commandsExecuted = 0;

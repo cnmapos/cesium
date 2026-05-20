@@ -1,4 +1,4 @@
-import { defined } from "@hztx/engine";
+import { defined } from "@hztxi/cesium-engine";
 
 import { Animation, AnimationViewModel, ClockViewModel } from "../../index.js";
 

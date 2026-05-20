@@ -1,4 +1,4 @@
-import { Color, defined, JulianDate } from "@hztx/engine";
+import { Color, defined, JulianDate } from "@hztxi/cesium-engine";
 
 /**
  * @private

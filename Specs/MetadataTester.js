@@ -9,7 +9,7 @@ import {
   MetadataEnum,
   MetadataTable,
   MetadataType,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 function MetadataTester() {}
 

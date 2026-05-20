@@ -1,4 +1,4 @@
-import { DeveloperError } from "@hztx/engine";
+import { DeveloperError } from "@hztxi/cesium-engine";
 
 /**
  * A Command is a function with an extra <code>canExecute</code> observable property to determine

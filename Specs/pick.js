@@ -8,7 +8,7 @@ import {
   FrameState,
   JobScheduler,
   PickFramebuffer,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 function executeCommands(context, passState, commands) {
   const length = commands.length;

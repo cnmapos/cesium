@@ -2,7 +2,7 @@ import {
   OrthographicFrustum,
   PerspectiveFrustum,
   SceneMode,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 import { ProjectionPickerViewModel } from "../../index.js";
 

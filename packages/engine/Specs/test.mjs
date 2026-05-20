@@ -2,7 +2,7 @@ import {
   Cartographic,
   createWorldTerrainAsync,
   sampleTerrain,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import assert from "node:assert";
 
 // NodeJS smoke screen test

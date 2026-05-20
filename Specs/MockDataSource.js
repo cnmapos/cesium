@@ -1,4 +1,4 @@
-import { Event, EntityCluster, EntityCollection } from "@hztx/engine";
+import { Event, EntityCluster, EntityCollection } from "@hztxi/cesium-engine";
 
 function MockDataSource() {
   //Values to be fiddled with by the test

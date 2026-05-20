@@ -19,7 +19,7 @@ import SDFSettings from "./SDFSettings.js";
 import TextureAtlas from "../Renderer/TextureAtlas.js";
 import VerticalOrigin from "./VerticalOrigin.js";
 import GraphemeSplitter from "grapheme-splitter";
-import { Check } from "@hztx/engine";
+import { Check } from "@hztxi/cesium-engine";
 
 /**
  * A glyph represents a single character in label.

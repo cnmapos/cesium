@@ -1,0 +1,11 @@
+{
+  "name": "npm-cesium-alias-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "node verify-resolution.mjs"
+  },
+  "dependencies": {
+    "cesium": "npm:@hztxi/cesium@^1.141.2"
+  }
+}

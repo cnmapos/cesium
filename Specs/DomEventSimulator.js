@@ -1,4 +1,4 @@
-import { Frozen } from "@hztx/engine";
+import { Frozen } from "@hztxi/cesium-engine";
 
 function createMouseEvent(type, options) {
   options = options ?? Frozen.EMPTY_OBJECT;

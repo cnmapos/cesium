@@ -1,4 +1,4 @@
-import { MetadataComponentType } from "@hztx/engine";
+import { MetadataComponentType } from "@hztxi/cesium-engine";
 import defined from "../Core/defined.js";
 import DrawCommand from "../Renderer/DrawCommand.js";
 import RenderState from "../Renderer/RenderState.js";

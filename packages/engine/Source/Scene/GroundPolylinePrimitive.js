@@ -182,6 +182,9 @@ function GroundPolylinePrimitive(options) {
 
   this._retainedGeometryInstances = undefined;
 
+  /** @private Root {@link GroundPolylineGeometry} ref from the last inner {@link Primitive} build. */
+  this._lastGroundPolylineRootGeometry = undefined;
+
   this._ready = false;
   this._primitive = undefined;
 
@@ -316,19 +319,30 @@ GroundPolylinePrimitive.initializeTerrainHeights = function () {
   return ApproximateTerrainHeights.initialize();
 };
 
+function normalizeGeometryInstances(instances) {
+  if (!defined(instances)) {
+    return instances;
+  }
+  return Array.isArray(instances) ? instances : [instances];
+}
+
 function verticalExaggerationMatchesFrameState(geometryInstances, frameState) {
-  if (!defined(geometryInstances)) {
+  const instances = normalizeGeometryInstances(geometryInstances);
+  if (!defined(instances)) {
     return true;
   }
   const ex = frameState.verticalExaggeration;
   const exRel = frameState.verticalExaggerationRelativeHeight;
-  const length = geometryInstances.length;
+  const length = instances.length;
   for (let i = 0; i < length; ++i) {
-    const geom = geometryInstances[i].geometry;
-    if (
-      geom._verticalExaggeration !== ex ||
-      geom._verticalExaggerationRelativeHeight !== exRel
-    ) {
+    const instance = instances[i];
+    if (!defined(instance) || !defined(instance.geometry)) {
+      return false;
+    }
+    const geom = instance.geometry;
+    const geomEx = geom._verticalExaggeration ?? 1.0;
+    const geomExRel = geom._verticalExaggerationRelativeHeight ?? 0.0;
+    if (geomEx !== ex || geomExRel !== exRel) {
       return false;
     }
   }
@@ -689,19 +703,6 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
     return;
   }
 
-  if (!ApproximateTerrainHeights.initialized) {
-    //>>includeStart('debug', pragmas.debug);
-    if (!this.asynchronous) {
-      throw new DeveloperError(
-        "For synchronous GroundPolylinePrimitives, you must call GroundPolylinePrimitives.initializeTerrainHeights() and wait for the returned promise to resolve.",
-      );
-    }
-    //>>includeEnd('debug');
-
-    GroundPolylinePrimitive.initializeTerrainHeights();
-    return;
-  }
-
   let i;
 
   const that = this;
@@ -716,8 +717,49 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
       : [this.geometryInstances];
   }
 
-  const sourceGeometryInstances =
-    this.geometryInstances ?? this._retainedGeometryInstances;
+  if (!ApproximateTerrainHeights.initialized) {
+    //>>includeStart('debug', pragmas.debug);
+    if (!this.asynchronous) {
+      throw new DeveloperError(
+        "For synchronous GroundPolylinePrimitives, you must call GroundPolylinePrimitives.initializeTerrainHeights() and wait for the returned promise to resolve.",
+      );
+    }
+    //>>includeEnd('debug');
+
+    GroundPolylinePrimitive.initializeTerrainHeights();
+    return;
+  }
+
+  const sourceGeometryInstances = normalizeGeometryInstances(
+    this.geometryInstances ?? this._retainedGeometryInstances,
+  );
+
+  let rootGeometryFromSource;
+  if (defined(sourceGeometryInstances)) {
+    const src0 = sourceGeometryInstances[0];
+    if (defined(src0) && defined(src0.geometry)) {
+      rootGeometryFromSource = src0.geometry;
+    }
+  }
+
+  // New GeometryInstances (e.g. dynamic Entity polylines) assign a fresh GroundPolylineGeometry
+  // each frame. Destroy the inner Primitive when the source geometry object changes; otherwise
+  // we would keep rendering the previous combineGeometry result.
+  if (
+    defined(this._primitive) &&
+    defined(rootGeometryFromSource) &&
+    rootGeometryFromSource !== this._lastGroundPolylineRootGeometry
+  ) {
+    this._primitive = this._primitive.destroy();
+    this._primitive = undefined;
+    this._ready = false;
+    if (defined(this._sp)) {
+      this._sp = this._sp.destroy();
+    }
+    this._sp2D = undefined;
+    this._spMorph = undefined;
+    this._lastGroundPolylineRootGeometry = undefined;
+  }
 
   if (
     defined(this._primitive) &&
@@ -740,6 +782,7 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
 
     let attributes;
 
+    this._hasPerInstanceColors = true;
     // Check if each instance has a color attribute.
     for (i = 0; i < geometryInstancesLength; ++i) {
       attributes = geometryInstances[i].attributes;
@@ -752,7 +795,7 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
     for (i = 0; i < geometryInstancesLength; ++i) {
       const geometryInstance = geometryInstances[i];
       attributes = {};
-      const instanceAttributes = geometryInstance.attributes;
+      const instanceAttributes = geometryInstance.attributes ?? {};
       for (const attributeKey in instanceAttributes) {
         if (instanceAttributes.hasOwnProperty(attributeKey)) {
           attributes[attributeKey] = instanceAttributes[attributeKey];
@@ -837,6 +880,7 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
     };
 
     this._primitive = new Primitive(primitiveOptions);
+    this._lastGroundPolylineRootGeometry = rootGeometryFromSource;
   }
 
   if (
@@ -932,6 +976,7 @@ GroundPolylinePrimitive.prototype.isDestroyed = function () {
  * @see GroundPolylinePrimitive#isDestroyed
  */
 GroundPolylinePrimitive.prototype.destroy = function () {
+  this._lastGroundPolylineRootGeometry = undefined;
   this._primitive = this._primitive && this._primitive.destroy();
   this._sp = this._sp && this._sp.destroy();
 

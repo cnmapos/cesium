@@ -1,4 +1,4 @@
-# @hztx/engine
+# @hztxi/cesium-engine
 
 [![Build Status][build-status-badge]][build-status-link]
 [![npm][npm-badge]][npm-link]
@@ -10,9 +10,9 @@
 maps in a web browser without a plugin. It uses WebGL for hardware-accelerated graphics,
 and is cross-platform, cross-browser, and tuned for dynamic-data visualization.
 
-`@hztx/engine` includes cesiumJS's core, rendering, and data APIs. Here you'll find
-terrain and imagery engines, support for 3D Tiles and 3D models, geometries, and
-vector data.
+`@hztxi/cesium-engine` includes cesiumJS's core, rendering, and data APIs.
+Here you'll find terrain and imagery engines, support for 3D Tiles and 3D
+models, geometries, and vector data.
 
 ---
 
@@ -26,18 +26,18 @@ vector data.
 
 ## Install
 
-`@hztx/engine` is published as ES modules with full typing support.
+`@hztxi/cesium-engine` is published as ES modules with full typing support.
 
 Install with npm:
 
 ```sh
-npm install @hztx/engine --save
+npm install @hztxi/cesium-engine --save
 ```
 
 Or, install with yarn:
 
 ```sh
-yarn add @hztx/engine
+yarn add @hztxi/cesium-engine
 ```
 
 ## Usage
@@ -46,8 +46,8 @@ Import individual modules to benefit from tree shaking optimizations through mos
 build tools:
 
 ```js
-import { CesiumWidget } from "@hztx/engine";
-import "@hztx/engine/Source/Widget/CesiumWidget.css";
+import { CesiumWidget } from "@hztxi/cesium-engine";
+import "@hztxi/cesium-engine/Source/Widget/CesiumWidget.css";
 
 const cesiumWidget = new CesiumWidget("cesiumContainer");
 ```
@@ -69,8 +69,8 @@ CesiumJS is free for both commercial and non-commercial use.
 
 [build-status-badge]: https://github.com/CesiumGS/cesium/actions/workflows/dev.yml/badge.svg
 [build-status-link]: https://github.com/CesiumGS/cesium/actions/workflows/dev.yml
-[npm-badge]: https://img.shields.io/npm/v/@hztx/engine
-[npm-link]: https://www.npmjs.com/package/@hztx/engine
+[npm-badge]: https://img.shields.io/npm/v/@hztxi/cesium-engine
+[npm-link]: https://www.npmjs.com/package/@hztxi/cesium-engine
 [docs-badge]: https://img.shields.io/badge/docs-online-orange.svg
 [docs-link]: https://cesium.com/learn/
 [cesium-logo]: https://github.com/CesiumGS/cesium/wiki/logos/Cesium_Logo_Color.jpg

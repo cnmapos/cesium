@@ -1,14 +1,14 @@
-# @hztx/widgets
+# @hztxi/cesium-widgets
 
 [![Build Status](https://github.com/CesiumGS/cesium/actions/workflows/dev.yml/badge.svg)](https://github.com/CesiumGS/cesium/actions/workflows/dev.yml)
-[![npm](https://img.shields.io/npm/v/@hztx/widgets)](https://www.npmjs.com/package/@hztx/widgets)
+[![npm](https://img.shields.io/npm/v/@hztxi/cesium-widgets)](https://www.npmjs.com/package/@hztxi/cesium-widgets)
 [![Docs](https://img.shields.io/badge/docs-online-orange.svg)](https://cesium.com/learn/)
 
 ![Cesium](https://github.com/CesiumGS/cesium/wiki/logos/Cesium_Logo_Color.jpg)
 
 [CesiumJS](../../README.md) is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin. It uses WebGL for hardware-accelerated graphics, and is cross-platform, cross-browser, and tuned for dynamic-data visualization.
 
-`@hztx/widgets` is a widgets library for use with CesiumJS—including the `CesiumViewer` widget plus widgets for common tasks such as animation, base layer selection and geocoding.
+`@hztxi/cesium-widgets` is a widgets library for use with CesiumJS—including the `CesiumViewer` widget plus widgets for common tasks such as animation, base layer selection and geocoding.
 
 ---
 
@@ -18,18 +18,18 @@
 
 ## Install
 
-`@hztx/widgets` is published as ES modules with full typing support.
+`@hztxi/cesium-widgets` is published as ES modules with full typing support.
 
 Install with npm
 
 ```sh
-npm install @hztx/widgets --save
+npm install @hztxi/cesium-widgets --save
 ```
 
 Or, install with yarn
 
 ```sh
-yarn add @hztx/widgets
+yarn add @hztxi/cesium-widgets
 ```
 
 ## Usage
@@ -37,8 +37,8 @@ yarn add @hztx/widgets
 Import individual modules to benefit from tree shaking optimizations through most build tools:
 
 ```js
-import { Viewer } from "@hztx/widgets";
-import "@hztx/widgets/Source/widgets.css";
+import { Viewer } from "@hztxi/cesium-widgets";
+import "@hztxi/cesium-widgets/Source/widgets.css";
 
 const viewer = new Viewer("cesiumContainer");
 ```

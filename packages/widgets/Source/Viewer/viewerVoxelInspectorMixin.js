@@ -1,4 +1,4 @@
-import { Check } from "@hztx/engine";
+import { Check } from "@hztxi/cesium-engine";
 import VoxelInspector from "../VoxelInspector/VoxelInspector.js";
 
 /**

@@ -5,7 +5,7 @@ import {
   DeveloperError,
   getElement,
   JulianDate,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import TimelineHighlightRange from "./TimelineHighlightRange.js";
 import TimelineTrack from "./TimelineTrack.js";
 

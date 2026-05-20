@@ -1,4 +1,4 @@
-import { ColorMaterialProperty } from "@hztx/engine";
+import { ColorMaterialProperty } from "@hztxi/cesium-engine";
 
 function testMaterialDefinitionChanged(property, name, value1, value2) {
   const listener = jasmine.createSpy("listener");

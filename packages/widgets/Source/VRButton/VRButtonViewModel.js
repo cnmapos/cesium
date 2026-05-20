@@ -6,7 +6,7 @@ import {
   Fullscreen,
   getElement,
   OrthographicFrustum,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 import NoSleep from "nosleep.js";
 import createCommand from "../createCommand.js";

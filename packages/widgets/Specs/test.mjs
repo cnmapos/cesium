@@ -1,4 +1,4 @@
-import { createCommand } from "@hztx/widgets";
+import { createCommand } from "@hztxi/cesium-widgets";
 import assert from "node:assert";
 
 // NodeJS smoke screen test

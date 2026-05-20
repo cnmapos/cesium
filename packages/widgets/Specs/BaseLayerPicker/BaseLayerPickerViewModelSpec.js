@@ -3,7 +3,7 @@ import {
   Event,
   GeographicTilingScheme,
   ImageryLayerCollection,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 
 import { BaseLayerPickerViewModel, ProviderViewModel } from "../../index.js";
 import pollToPromise from "../../../../Specs/pollToPromise.js";

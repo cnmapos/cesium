@@ -4,7 +4,7 @@ import {
   DeveloperError,
   EasingFunction,
   SceneTransforms,
-} from "@hztx/engine";
+} from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 
 const screenSpacePos = new Cartesian2();

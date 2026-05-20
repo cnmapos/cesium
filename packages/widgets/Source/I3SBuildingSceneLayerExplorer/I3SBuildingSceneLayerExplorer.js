@@ -1,4 +1,4 @@
-import { Check, defined } from "@hztx/engine";
+import { Check, defined } from "@hztxi/cesium-engine";
 import knockout from "../ThirdParty/knockout.js";
 import I3SBuildingSceneLayerExplorerViewModel from "./I3SBuildingSceneLayerExplorerViewModel.js";
 
