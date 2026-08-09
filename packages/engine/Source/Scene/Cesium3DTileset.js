@@ -100,6 +100,7 @@ import ImageryLayerCollection from "./ImageryLayerCollection.js";
  * @property {number} [skipLevels=1] When <code>skipLevelOfDetail</code> is <code>true</code>, a constant defining the minimum number of levels to skip when loading tiles. When it is 0, no levels are skipped. Used in conjunction with <code>skipScreenSpaceErrorFactor</code> to determine which tiles to load.
  * @property {boolean} [immediatelyLoadDesiredLevelOfDetail=false] When <code>skipLevelOfDetail</code> is <code>true</code>, only tiles that meet the maximum screen space error will ever be downloaded. Skipping factors are ignored and just the desired tiles are loaded.
  * @property {boolean} [loadSiblings=false] When <code>skipLevelOfDetail</code> is <code>true</code>, determines whether siblings of visible tiles are always downloaded during traversal.
+ * @property {number} [maximumSimultaneousTileRequests=Infinity] Maximum number of this tileset's tile network requests that may be pending at once.
  * @property {ClippingPlaneCollection} [clippingPlanes] The {@link ClippingPlaneCollection} used to selectively disable rendering the tileset.
  * @property {ClippingPolygonCollection} [clippingPolygons] The {@link ClippingPolygonCollection} used to selectively disable rendering the tileset.
  * @property {ClassificationType} [classificationType] Determines whether terrain, 3D Tiles or both will be classified by this tileset. See {@link Cesium3DTileset#classificationType} for details about restrictions and limitations.
@@ -845,6 +846,16 @@ function Cesium3DTileset(options) {
    * @default false
    */
   this.loadSiblings = options.loadSiblings ?? false;
+
+  /**
+   * Maximum number of this tileset's tile network requests that may be
+   * pending at once.
+   *
+   * @type {number}
+   * @default Infinity
+   */
+  this.maximumSimultaneousTileRequests =
+    options.maximumSimultaneousTileRequests ?? Number.POSITIVE_INFINITY;
 
   this._clippingPlanes = undefined;
   if (defined(options.clippingPlanes)) {
@@ -2748,11 +2759,14 @@ function cancelOutOfViewRequests(tileset, frameState) {
 
     // NOTE: This is framerate dependant so make sure the threshold check is small
     const outOfView = frameState.frameNumber - tile._touchedFrame >= 1;
+    const noLongerDesired =
+      tileset.immediatelyLoadDesiredLevelOfDetail &&
+      tile._desiredFrame !== frameState.frameNumber;
     if (tile._contentState !== Cesium3DTileContentState.LOADING) {
       // No longer fetching from host, don't need to track it anymore. Gets marked as LOADING in Cesium3DTile::requestContent().
       ++removeCount;
       continue;
-    } else if (outOfView) {
+    } else if (outOfView || noLongerDesired) {
       // RequestScheduler will take care of cancelling it
       tile.cancelRequests();
       ++removeCount;
@@ -2776,7 +2790,13 @@ function cancelOutOfViewRequests(tileset, frameState) {
 function requestTiles(tileset) {
   const requestedTiles = tileset._requestedTiles;
   requestedTiles.sort(sortTilesByPriority);
-  for (let i = 0; i < requestedTiles.length; ++i) {
+  const availableRequests = Math.max(
+    0,
+    tileset.maximumSimultaneousTileRequests -
+      tileset._requestedTilesInFlight.length,
+  );
+  const requestCount = Math.min(requestedTiles.length, availableRequests);
+  for (let i = 0; i < requestCount; ++i) {
     requestContent(tileset, requestedTiles[i]);
   }
 }

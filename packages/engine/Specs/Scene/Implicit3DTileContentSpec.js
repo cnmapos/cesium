@@ -56,7 +56,7 @@ describe(
       implicitTiling: {
         subdivisionScheme: "QUADTREE",
         subtreeLevels: 2,
-        availableLevels: 2,
+        availableLevels: 8,
         subtrees: {
           uri: "https://example.com/{level}/{x}/{y}.subtree",
         },
@@ -539,6 +539,58 @@ describe(
       tiles = [];
       gatherTilesPreorder(subtreeRootTile, 0, 2, tiles);
       expect(mockTileset.statistics.numberOfTilesTotal).toBe(tiles.length);
+    });
+
+    it("does not create child subtrees at availableLevels", async function () {
+      const previousAvailableLevels = implicitTileset.availableLevels;
+      implicitTileset.availableLevels = 2;
+
+      try {
+        await Implicit3DTileContent.fromSubtreeJson(
+          mockTileset,
+          mockPlaceholderTile,
+          tilesetResource,
+          undefined,
+          quadtreeBuffer,
+          0,
+        );
+
+        const subtreeRootTile = mockPlaceholderTile.children[0];
+        const tiles = [];
+        gatherTilesPreorder(subtreeRootTile, 0, 3, tiles);
+        expect(tiles.every((tile) => tile.implicitCoordinates.level < 2)).toBe(
+          true,
+        );
+      } finally {
+        implicitTileset.availableLevels = previousAvailableLevels;
+      }
+    });
+
+    it("clips a partial final subtree to availableLevels", async function () {
+      const previousAvailableLevels = implicitTileset.availableLevels;
+      implicitTileset.availableLevels = 3;
+      mockPlaceholderTile.implicitCoordinates = new ImplicitTileCoordinates({
+        subdivisionScheme: implicitTileset.subdivisionScheme,
+        subtreeLevels: implicitTileset.subtreeLevels,
+        level: 2,
+        x: 2,
+        y: 1,
+      });
+
+      try {
+        await Implicit3DTileContent.fromSubtreeJson(
+          mockTileset,
+          mockPlaceholderTile,
+          tilesetResource,
+          quadtreeJson,
+        );
+
+        const subtreeRootTile = mockPlaceholderTile.children[0];
+        expect(subtreeRootTile.implicitCoordinates.level).toBe(2);
+        expect(subtreeRootTile.children.length).toBe(0);
+      } finally {
+        implicitTileset.availableLevels = previousAvailableLevels;
+      }
     });
 
     it("propagates refine down the tree", async function () {

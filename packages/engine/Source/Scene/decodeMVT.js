@@ -13,6 +13,7 @@ import RuntimeError from "../Core/RuntimeError.js";
 
 /**
  * @typedef {object} MVTFeature
+ * @property {bigint|undefined} id Optional MVT feature ID.
  * @property {"Point"|"LineString"|"Polygon"|"Unknown"} type
  * @property {Array<MVTPoint>|Array<Array<MVTPoint>>} geometry
  * @property {Record<string, string|number|boolean|bigint>} properties
@@ -86,9 +87,26 @@ const LayerField = {
 
 // Feature message field numbers (spec §4.2)
 const FeatureField = {
+  ID: 1,
   TAGS: 2,
   TYPE: 3,
   GEOMETRY: 4,
+};
+
+// GeoVis compact vector-tile field numbers. GeoVis PBF is not standard MVT,
+// but it retains MVT's value, tag, and delta-coordinate encoding.
+const GeoVisLayerField = {
+  VALUES: 1,
+  FEATURES: 2,
+  NAME: 3,
+  KEYS: 4,
+  EXTENT: 5,
+};
+
+const GeoVisFeatureField = {
+  TYPE: 1,
+  GEOMETRY: 2,
+  TAGS: 3,
 };
 
 // Value message field numbers (spec §4.4)
@@ -110,11 +128,15 @@ const geomTypeName = ["Unknown", "Point", "LineString", "Polygon"];
  * (0 – layer.extent, typically 4096).
  *
  * @param {ArrayBuffer} arrayBuffer The raw .pbf tile binary
+ * @param {"mvt"|"geovis"} [format="mvt"] PBF schema used by the tile service.
  * @returns {DecodedMVT}
  * @ignore
  */
-function decodeMVT(arrayBuffer) {
+function decodeMVT(arrayBuffer, format = "mvt") {
   const bytes = new Uint8Array(arrayBuffer);
+  if (format === "geovis") {
+    return decodeGeoVisMVT(bytes);
+  }
   const layers = [];
   let pos = 0;
 
@@ -142,6 +164,221 @@ function decodeMVT(arrayBuffer) {
   }
 
   return { layers };
+}
+
+/**
+ * Decode GeoVis's compact PBF schema into the same normalized structure as MVT.
+ * GeoVis keeps the tile envelope (Tile.layers = field 3), but moves layer values
+ * to field 1, layer name to field 3, keys to field 4, and feature type/tags/
+ * geometry to fields 1/3/2 respectively.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {DecodedMVT}
+ * @ignore
+ */
+function decodeGeoVisMVT(bytes) {
+  const layers = [];
+  let pos = 0;
+
+  while (pos < bytes.length) {
+    const tag = readTag(bytes, pos, bytes.length);
+    pos = tag.newPos;
+    if (tag.fieldNumber !== TileField.LAYERS || tag.wireType !== 2) {
+      pos = skipField(bytes, pos, tag.wireType, bytes.length);
+      continue;
+    }
+
+    const layerLength = readVarintLength(bytes, pos, bytes.length);
+    pos = layerLength.newPos;
+    const layerEnd = advanceByLength(
+      pos,
+      layerLength.value,
+      bytes.length,
+      "GeoVis layer",
+    );
+    layers.push(decodeGeoVisLayer(bytes, pos, layerEnd));
+    pos = layerEnd;
+  }
+
+  return { layers };
+}
+
+/**
+ * @param {Uint8Array} bytes
+ * @param {number} start
+ * @param {number} end
+ * @returns {MVTLayer}
+ * @ignore
+ */
+function decodeGeoVisLayer(bytes, start, end) {
+  let pos = start;
+  let name = "";
+  let extent = 4096;
+  /** @type {string[]} */
+  const keys = [];
+  /** @type {Array.<string|number|boolean|bigint|undefined>} */
+  const values = [];
+  const rawFeatures = [];
+
+  while (pos < end) {
+    const tag = readTag(bytes, pos, end);
+    pos = tag.newPos;
+
+    if (tag.wireType === 2) {
+      const length = readVarintLength(bytes, pos, end);
+      pos = length.newPos;
+      const fieldEnd = advanceByLength(
+        pos,
+        length.value,
+        end,
+        "GeoVis layer field",
+      );
+
+      if (tag.fieldNumber === GeoVisLayerField.VALUES) {
+        values.push(decodeValue(bytes, pos, fieldEnd));
+      } else if (tag.fieldNumber === GeoVisLayerField.FEATURES) {
+        rawFeatures.push({ start: pos, end: fieldEnd });
+      } else if (tag.fieldNumber === GeoVisLayerField.NAME) {
+        name = readString(bytes, pos, fieldEnd - pos);
+      } else if (tag.fieldNumber === GeoVisLayerField.KEYS) {
+        keys.push(readString(bytes, pos, fieldEnd - pos));
+      }
+      pos = fieldEnd;
+    } else if (
+      tag.fieldNumber === GeoVisLayerField.EXTENT &&
+      tag.wireType === 0
+    ) {
+      const value = readVarint32(bytes, pos, end);
+      extent = value.value;
+      pos = value.newPos;
+    } else {
+      pos = skipField(bytes, pos, tag.wireType, end);
+    }
+  }
+
+  const features = rawFeatures.map(({ start: featureStart, end: featureEnd }) =>
+    decodeGeoVisFeature(bytes, featureStart, featureEnd, keys, values),
+  );
+  return { name, extent, features };
+}
+
+/**
+ * @param {Uint8Array} bytes
+ * @param {number} start
+ * @param {number} end
+ * @param {string[]} keys
+ * @param {Array.<string|number|boolean|bigint|undefined>} values
+ * @returns {MVTFeature}
+ * @ignore
+ */
+function decodeGeoVisFeature(bytes, start, end, keys, values) {
+  let pos = start;
+  let geomType = GeomType.UNKNOWN;
+  /** @type {number[]} */
+  const tags = [];
+  /** @type {number[]} */
+  const geometryCommands = [];
+
+  while (pos < end) {
+    const tag = readTag(bytes, pos, end);
+    pos = tag.newPos;
+
+    if (tag.wireType === 0 && tag.fieldNumber === GeoVisFeatureField.TYPE) {
+      const value = readVarint32(bytes, pos, end);
+      // GeoVis shifts the MVT geometry type by one.
+      geomType = value.value - 1;
+      pos = value.newPos;
+    } else if (tag.wireType === 2) {
+      const length = readVarintLength(bytes, pos, end);
+      pos = length.newPos;
+      const fieldEnd = advanceByLength(
+        pos,
+        length.value,
+        end,
+        "GeoVis feature field",
+      );
+      const target =
+        tag.fieldNumber === GeoVisFeatureField.GEOMETRY
+          ? geometryCommands
+          : tag.fieldNumber === GeoVisFeatureField.TAGS
+            ? tags
+            : undefined;
+      if (target !== undefined) {
+        while (pos < fieldEnd) {
+          const value = readVarint32(bytes, pos, fieldEnd);
+          target.push(value.value);
+          pos = value.newPos;
+        }
+      }
+      pos = fieldEnd;
+    } else {
+      pos = skipField(bytes, pos, tag.wireType, end);
+    }
+  }
+
+  /** @type {Record<string, string|number|boolean|bigint>} */
+  const properties = {};
+  for (let i = 0; i < tags.length - 1; i += 2) {
+    const key = keys[tags[i]];
+    const value = values[tags[i + 1]];
+    if (typeof key === "string" && value !== undefined) {
+      properties[key] = value;
+    }
+  }
+
+  return {
+    id: undefined,
+    type: /** @type {"Point"|"LineString"|"Polygon"|"Unknown"} */ (
+      geomTypeName[geomType] ?? "Unknown"
+    ),
+    geometry: decodeGeometry(
+      geomType,
+      normalizeGeoVisGeometry(geometryCommands),
+    ),
+    properties,
+  };
+}
+
+/**
+ * GeoVis remaps MoveTo's command ID from 1 to 4 and LineTo's from 2 to 3.
+ * Coordinates and command counts remain the standard MVT delta representation.
+ *
+ * @param {number[]} commands
+ * @returns {number[]}
+ * @ignore
+ */
+function normalizeGeoVisGeometry(commands) {
+  const normalized = [];
+  let pos = 0;
+  while (pos < commands.length) {
+    const command = commands[pos++];
+    const count = command >>> 3;
+    const commandId = command & 0x7;
+    let mvtCommandId;
+    if (commandId === 4) {
+      mvtCommandId = 1;
+    } else if (commandId === 3) {
+      mvtCommandId = 2;
+    } else if (commandId === 7) {
+      mvtCommandId = 7;
+    } else {
+      return [];
+    }
+
+    normalized.push((count << 3) | mvtCommandId);
+    if (mvtCommandId === 7) {
+      continue;
+    }
+
+    const coordinateCount = count * 2;
+    if (pos + coordinateCount > commands.length) {
+      return [];
+    }
+    for (let i = 0; i < coordinateCount; i++) {
+      normalized.push(commands[pos++]);
+    }
+  }
+  return normalized;
 }
 
 /**
@@ -224,6 +461,7 @@ function decodeLayer(bytes, start, end) {
  */
 function decodeFeature(bytes, start, end, keys, values) {
   let pos = start;
+  let id;
   let geomType = GeomType.UNKNOWN;
   const tags = [];
   const geometryCommands = [];
@@ -234,7 +472,11 @@ function decodeFeature(bytes, start, end, keys, values) {
     const wireType = tag.wireType;
     pos = tag.newPos;
 
-    if (fieldNumber === FeatureField.TYPE && wireType === 0) {
+    if (fieldNumber === FeatureField.ID && wireType === 0) {
+      const value = readBigVarint(bytes, pos, end);
+      id = value.value;
+      pos = value.newPos;
+    } else if (fieldNumber === FeatureField.TYPE && wireType === 0) {
       // geometry type
       const value = readVarint32(bytes, pos, end);
       geomType = value.value;
@@ -284,6 +526,7 @@ function decodeFeature(bytes, start, end, keys, values) {
   const geometry = decodeGeometry(geomType, geometryCommands);
 
   return {
+    id,
     type: /** @type {"Point"|"LineString"|"Polygon"|"Unknown"} */ (
       geomTypeName[geomType] ?? "Unknown"
     ),

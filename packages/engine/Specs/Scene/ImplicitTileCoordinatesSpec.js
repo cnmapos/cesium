@@ -79,6 +79,23 @@ describe("Scene/ImplicitTileCoordinates", function () {
     expect(coordinates.z).toEqual(1);
   });
 
+  it("provides a Web Mercator Y value for URL templates", function () {
+    const coordinates = quadtreeCoordinates(4, 3, 2);
+
+    expect(coordinates.getTemplateValues()).toEqual({
+      level: 4,
+      x: 3,
+      y: 2,
+      webMercatorY: 11,
+    });
+  });
+
+  it("converts latitude-linear implicit rows to Web Mercator rows", function () {
+    const coordinates = quadtreeCoordinates(13, 6747, 6017);
+
+    expect(coordinates.getTemplateValues().webMercatorY).toBe(3104);
+  });
+
   it("constructor throws with invalid inputs for quadree", function () {
     // negative level
     expect(function () {
@@ -827,6 +844,7 @@ describe("Scene/ImplicitTileCoordinates", function () {
       level: 4,
       x: 3,
       y: 2,
+      webMercatorY: 11,
     });
   });
 
@@ -839,6 +857,7 @@ describe("Scene/ImplicitTileCoordinates", function () {
       level: 4,
       x: 3,
       y: 2,
+      webMercatorY: 11,
       z: 1,
     });
   });

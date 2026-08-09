@@ -19,6 +19,7 @@ import defined from "../Core/defined.js";
 import destroyObject from "../Core/destroyObject.js";
 import DeveloperError from "../Core/DeveloperError.js";
 import { isHeightReferenceClamp } from "./HeightReference.js";
+import { getMvtLabelCandidatesByteLength } from "./MvtLabelCandidates.js";
 
 /** @import BufferPrimitive from "./BufferPrimitive.js"; */
 /** @import BufferPrimitiveCollection from "./BufferPrimitiveCollection.js"; */
@@ -112,6 +113,11 @@ class VectorGltf3DTileContent {
 
     /** @type {Matrix4} */
     this._modelMatrix = Matrix4.clone(Matrix4.IDENTITY);
+
+    this._mvtLabelManager = undefined;
+    this._mvtLabelTile = undefined;
+    this._mvtLabelByteLength = 0;
+    this._renderVectorGeometry = true;
   }
 
   get featuresLength() {
@@ -152,7 +158,7 @@ class VectorGltf3DTileContent {
     return this.batchTables.reduce(
       // @ts-expect-error Missing types.
       (acc, batchTable) => acc + batchTable.batchTableByteLength,
-      0,
+      this._mvtLabelByteLength,
     );
   }
 
@@ -342,22 +348,22 @@ class VectorGltf3DTileContent {
     );
 
     // Only bake collections selected to render this frame (avoids duplicates).
-    const isSelected =
-      defined(vectorProvider) &&
-      this._tile._selectedFrame === frameState.frameNumber;
+    const isSelected = this._tile._selectedFrame === frameState.frameNumber;
 
-    for (let i = 0; i < this._collections.length; i++) {
-      const collection = this._collections[i];
-      Matrix4.multiplyTransformation(
-        scratchTileModelMatrix,
-        this._collectionLocalMatrices[i],
-        collection.modelMatrix,
-      );
+    if (this._renderVectorGeometry) {
+      for (let i = 0; i < this._collections.length; i++) {
+        const collection = this._collections[i];
+        Matrix4.multiplyTransformation(
+          scratchTileModelMatrix,
+          this._collectionLocalMatrices[i],
+          collection.modelMatrix,
+        );
 
-      if (!isHeightReferenceClamp(tileset._heightReference)) {
-        collection.update(frameState);
-      } else if (isSelected) {
-        vectorProvider.markSelected(collection, frameState.frameNumber);
+        if (!isHeightReferenceClamp(tileset._heightReference)) {
+          collection.update(frameState);
+        } else if (isSelected && defined(vectorProvider)) {
+          vectorProvider.markSelected(collection, frameState.frameNumber);
+        }
       }
     }
   }
@@ -385,6 +391,10 @@ class VectorGltf3DTileContent {
       vectorProvider?.remove(collection);
       collection.destroy();
     }
+    this._mvtLabelManager?.removeTile(this._mvtLabelTile);
+    this._mvtLabelManager = undefined;
+    this._mvtLabelTile = undefined;
+    this._mvtLabelByteLength = 0;
     this._collections.length = 0;
     return destroyObject(this);
   }
@@ -394,10 +404,34 @@ class VectorGltf3DTileContent {
    * @param {Cesium3DTile} tile
    * @param {Resource} resource
    * @param {Uint8Array} glb GLB binary produced by buildVectorGltfFromMVT
+   * @param {*} [mvtLabelManager]
+   * @param {Array<*>} [mvtLabelCandidates]
+   * @param {{tileX:number,tileY:number,tileZ:number}} [tileCoordinates]
+   * @param {boolean} [renderVectorGeometry=true]
    * @returns {Promise<VectorGltf3DTileContent>}
    */
-  static async fromGltf(tileset, tile, resource, glb) {
+  static async fromGltf(
+    tileset,
+    tile,
+    resource,
+    glb,
+    mvtLabelManager,
+    mvtLabelCandidates,
+    tileCoordinates,
+    renderVectorGeometry,
+  ) {
     const content = new VectorGltf3DTileContent(tileset, tile, resource);
+    content._renderVectorGeometry = renderVectorGeometry ?? true;
+    if (defined(mvtLabelManager) && defined(mvtLabelCandidates)) {
+      content._mvtLabelManager = mvtLabelManager;
+      content._mvtLabelTile = mvtLabelManager.addTile(
+        tile,
+        tileCoordinates,
+        mvtLabelCandidates,
+      );
+      content._mvtLabelByteLength =
+        getMvtLabelCandidatesByteLength(mvtLabelCandidates);
+    }
     const modelOptions = makeModelOptions(tileset, tile, content, glb);
     const model = await Model.fromGltfAsync(modelOptions);
     // @ts-expect-error Requires Model conversion to ES6 class.

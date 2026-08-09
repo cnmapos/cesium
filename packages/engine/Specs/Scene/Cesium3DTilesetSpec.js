@@ -4892,6 +4892,47 @@ describe(
       expect(allCancelled).toBe(true);
     });
 
+    it("cancels in-flight tiles that are no longer the desired LOD", async function () {
+      viewNothing();
+
+      const tileset = await Cesium3DTilesTester.loadTileset(
+        scene,
+        tilesetUniform,
+        {
+          skipLevelOfDetail: true,
+          immediatelyLoadDesiredLevelOfDetail: true,
+          cullRequestsWhileMoving: false,
+        },
+      );
+      viewRootOnly();
+      scene.renderForSpecs();
+
+      const oldRequests = tileset._requestedTilesInFlight.slice();
+      expect(oldRequests.length).toBeGreaterThan(0);
+
+      viewAllTiles();
+      scene.renderForSpecs();
+
+      expect(oldRequests.every((tile) => tile._request.cancelled)).toBe(true);
+    });
+
+    it("limits simultaneous tile requests", async function () {
+      viewNothing();
+
+      const tileset = await Cesium3DTilesTester.loadTileset(
+        scene,
+        tilesetUniform,
+        {
+          maximumSimultaneousTileRequests: 1,
+          cullRequestsWhileMoving: false,
+        },
+      );
+      viewAllTiles();
+      scene.renderForSpecs();
+
+      expect(tileset._requestedTilesInFlight.length).toBe(1);
+    });
+
     it("sorts requests by priority", async function () {
       viewNothing();
 

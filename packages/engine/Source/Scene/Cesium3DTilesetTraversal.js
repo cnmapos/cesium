@@ -130,6 +130,9 @@ Cesium3DTilesetTraversal.touchTile = function (tile, frameState) {
  */
 Cesium3DTilesetTraversal.loadTile = function (tile, frameState) {
   const { tileset } = tile;
+  if (tileset.immediatelyLoadDesiredLevelOfDetail) {
+    tile._desiredFrame = frameState.frameNumber;
+  }
   if (
     tile._requestedFrame === frameState.frameNumber ||
     (!tile.hasUnloadedRenderableContent && !tile.contentExpired)

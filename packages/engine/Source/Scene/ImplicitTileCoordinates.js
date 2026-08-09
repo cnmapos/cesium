@@ -4,6 +4,8 @@ import DeveloperError from "../Core/DeveloperError.js";
 import MortonOrder from "../Core/MortonOrder.js";
 import ImplicitSubdivisionScheme from "./ImplicitSubdivisionScheme.js";
 
+const webMercatorMaximumLatitude = Math.atan(Math.sinh(Math.PI));
+
 /**
  * The coordinates for a tile in an implicit tileset. The coordinates
  * are (level, x, y) for quadtrees or (level, x, y, z) for octrees.
@@ -540,6 +542,7 @@ ImplicitTileCoordinates.prototype.getTemplateValues = function () {
     level: this.level,
     x: this.x,
     y: this.y,
+    webMercatorY: getWebMercatorY(this.level, this.y),
   };
   if (this.subdivisionScheme === ImplicitSubdivisionScheme.OCTREE) {
     values.z = this.z;
@@ -547,6 +550,20 @@ ImplicitTileCoordinates.prototype.getTemplateValues = function () {
 
   return values;
 };
+
+/** @param {number} level @param {number} implicitY */
+function getWebMercatorY(level, implicitY) {
+  const dimension = Math.pow(2, level);
+  const latitude =
+    -webMercatorMaximumLatitude +
+    (2.0 * webMercatorMaximumLatitude * (implicitY + 0.5)) / dimension;
+  const normalizedY = (1.0 - Math.asinh(Math.tan(latitude)) / Math.PI) * 0.5;
+  return CesiumMath.clamp(
+    Math.floor(normalizedY * dimension),
+    0,
+    dimension - 1,
+  );
+}
 
 const scratchCoordinatesArray = [0, 0, 0];
 

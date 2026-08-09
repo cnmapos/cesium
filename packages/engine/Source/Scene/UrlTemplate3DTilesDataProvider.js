@@ -207,8 +207,8 @@ class UrlTemplate3DTilesDataProvider {
   }
 
   /**
-   * @private
-   * @param {FrameState} frameState
+   * @param {*} frameState
+   * @protected
    */
   update(frameState) {
     if (defined(this._tileset)) {
@@ -277,6 +277,9 @@ class UrlTemplate3DTilesDataProvider {
  * @ignore
  */
 function buildRuntimeTilesetJson(resource, options) {
+  if (!defined(options.extent) && options.minZoom === 0) {
+    return buildImplicitRuntimeTilesetJson(resource, options.maxZoom);
+  }
   const tilingScheme = new WebMercatorTilingScheme();
   const extent = defined(options.extent)
     ? Rectangle.clone(options.extent)
@@ -323,6 +326,47 @@ function buildRuntimeTilesetJson(resource, options) {
     },
     geometricError: root.geometricError,
     root: root,
+  };
+}
+
+/**
+ * A compact, always-available implicit quadtree. The previous explicit tree
+ * contained every global tile through maxZoom and became impractical at z14.
+ * @param {Resource} resource
+ * @param {number} maxZoom
+ * @returns {object}
+ * @ignore
+ */
+function buildImplicitRuntimeTilesetJson(resource, maxZoom) {
+  const tilingScheme = new WebMercatorTilingScheme();
+  const subtree = encodeURIComponent(
+    JSON.stringify({
+      tileAvailability: { constant: 1 },
+      contentAvailability: { constant: 1 },
+      childSubtreeAvailability: { constant: 1 },
+    }),
+  );
+  // @ts-expect-error Missing types.
+  const contentUri = getAbsoluteUri(resource.url)
+    .replace(/\{z\}/gi, "{level}")
+    // Implicit regions subdivide latitude linearly, while web vector tiles
+    // subdivide Web Mercator. Use the source tile row for the implicit cell.
+    .replace(/\{y\}/gi, "{webMercatorY}");
+  return {
+    asset: { version: "1.1" },
+    geometricError: computeGeometricError(0),
+    root: {
+      boundingVolume: { region: rectangleToRegion(tilingScheme.rectangle) },
+      geometricError: computeGeometricError(0),
+      refine: "REPLACE",
+      content: { uri: contentUri },
+      implicitTiling: {
+        subdivisionScheme: "QUADTREE",
+        subtreeLevels: 5,
+        availableLevels: maxZoom + 1,
+        subtrees: { uri: `data:application/json,${subtree}` },
+      },
+    },
   };
 }
 

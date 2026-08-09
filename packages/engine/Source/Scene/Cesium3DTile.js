@@ -503,6 +503,7 @@ function Cesium3DTile(tileset, baseResource, header, parent) {
   this._selectedFrame = 0;
   this._wasSelectedLastFrame = false;
   this._requestedFrame = 0;
+  this._desiredFrame = 0;
   this._ancestorWithContent = undefined;
   this._ancestorWithContentAvailable = undefined;
   this._refines = false;
@@ -1372,7 +1373,14 @@ Cesium3DTile._isEmptyTile = isEmptyTile;
 async function makeContent(tile, arrayBuffer) {
   const tileset = tile._tileset;
   const codec = tileset?._runtimeContentCodec;
-  if (defined(codec) && typeof codec.createContent === "function") {
+  // Runtime codecs own leaf payloads. Implicit placeholder tiles first load a
+  // subtree JSON/binary payload, which must continue through normal dispatch
+  // so it can expand into the codec's derived content tiles.
+  if (
+    !defined(tile.implicitTileset) &&
+    defined(codec) &&
+    typeof codec.createContent === "function"
+  ) {
     const content = await Promise.resolve(
       codec.createContent(tileset, tile, tile._contentResource, arrayBuffer),
     );

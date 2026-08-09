@@ -310,7 +310,14 @@ function expandSubtree(content, subtree) {
  */
 function listChildSubtrees(content, subtree, bottomRow) {
   const results = [];
-  const branchingFactor = content._implicitTileset.branchingFactor;
+  const implicitTileset = content._implicitTileset;
+  const nextSubtreeLevel =
+    content._implicitCoordinates.level + implicitTileset.subtreeLevels;
+  if (nextSubtreeLevel >= implicitTileset.availableLevels) {
+    return results;
+  }
+
+  const branchingFactor = implicitTileset.branchingFactor;
   for (let i = 0; i < bottomRow.length; i++) {
     const leafTile = bottomRow[i];
     if (!defined(leafTile)) {
@@ -373,7 +380,11 @@ function transcodeSubtreeTiles(content, subtree, placeholderTile, childIndex) {
   let currentRow = [];
 
   const implicitTileset = content._implicitTileset;
-  for (let level = 1; level < implicitTileset.subtreeLevels; level++) {
+  const availableSubtreeLevels = Math.min(
+    implicitTileset.subtreeLevels,
+    implicitTileset.availableLevels - content._implicitCoordinates.level,
+  );
+  for (let level = 1; level < availableSubtreeLevels; level++) {
     const levelOffset = subtree.getLevelOffset(level);
     const numberOfChildren = implicitTileset.branchingFactor * parentRow.length;
     for (

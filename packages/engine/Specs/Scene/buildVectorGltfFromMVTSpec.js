@@ -35,6 +35,27 @@ describe("Scene/buildVectorGltfFromMVT", function () {
     expect(gltf).toBeUndefined();
   });
 
+  it("returns undefined for tiles with no renderable MVT geometry", function () {
+    const decoded = {
+      layers: [
+        {
+          name: "bgplg",
+          extent: 4096,
+          features: [
+            {
+              type: "Unknown",
+              geometry: [],
+              properties: {},
+            },
+          ],
+        },
+      ],
+    };
+
+    const gltf = buildVectorGltfFromMVT(decoded, tileCoordinates);
+    expect(gltf).toBeUndefined();
+  });
+
   it("builds vector primitives for point, line, and polygon features", function () {
     const decoded = {
       layers: [

@@ -50,6 +50,9 @@ describe("Scene/decodeMVT", function () {
 
   function encodeFeature(options) {
     const bytes = [];
+    if (options.id !== undefined) {
+      bytes.push(...encodeUInt(1, options.id));
+    }
     if (options.tags && options.tags.length > 0) {
       bytes.push(...encodePackedVarints(2, options.tags));
     }
@@ -83,8 +86,36 @@ describe("Scene/decodeMVT", function () {
     return new Uint8Array(bytes).buffer;
   }
 
+  function encodeGeoVisFeature(options) {
+    const bytes = [];
+    bytes.push(...encodeUInt(1, options.type + 1));
+    bytes.push(...encodePackedVarints(2, options.geometryCommands));
+    if (options.tags && options.tags.length > 0) {
+      bytes.push(...encodePackedVarints(3, options.tags));
+    }
+    return bytes;
+  }
+
+  function encodeGeoVisLayer(options) {
+    const bytes = [];
+    for (const value of options.values) {
+      bytes.push(...encodeBytes(1, value));
+    }
+    for (const feature of options.features) {
+      bytes.push(...encodeBytes(2, feature));
+    }
+    bytes.push(...encodeString(3, options.name));
+    for (const key of options.keys) {
+      bytes.push(...encodeString(4, key));
+    }
+    bytes.push(...encodeUInt(5, options.extent ?? 4096));
+    bytes.push(...encodeUInt(15, 2));
+    return bytes;
+  }
+
   it("decodes point geometry and feature properties", function () {
     const pointFeature = encodeFeature({
+      id: 42,
       type: 1, // POINT
       tags: [0, 0], // key[0] -> value[0]
       geometryCommands: [9, 50, 34], // MoveTo(1), dx=25, dy=17
@@ -104,6 +135,7 @@ describe("Scene/decodeMVT", function () {
 
     const feature = decoded.layers[0].features[0];
     expect(feature.type).toBe("Point");
+    expect(feature.id).toBe(42n);
     expect(feature.geometry).toEqual([{ x: 25, y: 17 }]);
     expect(feature.properties.id).toBe("p1");
   });
@@ -143,6 +175,36 @@ describe("Scene/decodeMVT", function () {
       { x: 10, y: 10 },
       { x: 0, y: 10 },
       { x: 0, y: 0 },
+    ]);
+  });
+
+  it("decodes GeoVis compact PBF layers without Mapbox", function () {
+    const pointFeature = encodeGeoVisFeature({
+      type: 1,
+      tags: [0, 0],
+      // GeoVis uses MoveTo command ID 4 instead of 1.
+      geometryCommands: [12, 50, 34],
+    });
+    const lineFeature = encodeGeoVisFeature({
+      type: 2,
+      // GeoVis uses MoveTo command ID 4 and LineTo command ID 3.
+      geometryCommands: [12, 0, 0, 11, 20, 0],
+    });
+    const layer = encodeGeoVisLayer({
+      name: "I",
+      features: [pointFeature, lineFeature],
+      keys: ["h"],
+      values: [encodeValueString("Main St")],
+    });
+    const tile = encodeTile([layer]);
+
+    const decoded = decodeMVT(tile, "geovis");
+    expect(decoded.layers[0].name).toBe("I");
+    expect(decoded.layers[0].features[0].properties.h).toBe("Main St");
+    expect(decoded.layers[0].features[0].geometry).toEqual([{ x: 25, y: 17 }]);
+    expect(decoded.layers[0].features[1].geometry[0]).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
     ]);
   });
 });
