@@ -35,6 +35,14 @@ import { getMvtLabelCandidatesByteLength } from "./MvtLabelCandidates.js";
 /** @import Ray from "../Core/Ray.js"; */
 /** @import Resource from "../Core/Resource.js"; */
 
+/**
+ * @typedef {object} VectorGltfModelStatistics
+ * @property {number} geometryByteLength
+ * @property {number} texturesByteLength
+ */
+
+/** @typedef {Model & {statistics: VectorGltfModelStatistics}} VectorGltfModel */
+
 /** @ignore */
 const point = new BufferPoint();
 /** @ignore */
@@ -72,7 +80,7 @@ class VectorGltf3DTileContent {
     /** @type {Resource} */
     this._resource = resource;
 
-    /** @type {Model} */
+    /** @type {VectorGltfModel} */
     this._model = undefined;
 
     /**
@@ -145,13 +153,17 @@ class VectorGltf3DTileContent {
   }
 
   get geometryByteLength() {
-    return this._collections.reduce((totalByteLength, collection) => {
-      return totalByteLength + collection.byteLength;
-    }, 0);
+    // The source glTF model is retained after its components are baked into the
+    // vector collections, so its buffers must be reported for the tileset cache
+    // to size itself correctly.
+    return this._collections.reduce(
+      (totalByteLength, collection) => totalByteLength + collection.byteLength,
+      this._model?.statistics.geometryByteLength ?? 0,
+    );
   }
 
   get texturesByteLength() {
-    return 0;
+    return this._model?.statistics.texturesByteLength ?? 0;
   }
 
   get batchTableByteLength() {
@@ -422,6 +434,13 @@ class VectorGltf3DTileContent {
   ) {
     const content = new VectorGltf3DTileContent(tileset, tile, resource);
     content._renderVectorGeometry = renderVectorGeometry ?? true;
+    const modelOptions = makeModelOptions(tileset, tile, content, glb);
+    const model = await Model.fromGltfAsync(modelOptions);
+    // @ts-expect-error Requires Model conversion to ES6 class.
+    model.show = false;
+    content._model = /** @type {VectorGltfModel} */ (model);
+    // Registered only once the load can no longer fail, so a rejected model
+    // cannot leave an orphaned tile in the label manager.
     if (defined(mvtLabelManager) && defined(mvtLabelCandidates)) {
       content._mvtLabelManager = mvtLabelManager;
       content._mvtLabelTile = mvtLabelManager.addTile(
@@ -432,11 +451,6 @@ class VectorGltf3DTileContent {
       content._mvtLabelByteLength =
         getMvtLabelCandidatesByteLength(mvtLabelCandidates);
     }
-    const modelOptions = makeModelOptions(tileset, tile, content, glb);
-    const model = await Model.fromGltfAsync(modelOptions);
-    // @ts-expect-error Requires Model conversion to ES6 class.
-    model.show = false;
-    content._model = model;
     return content;
   }
 }

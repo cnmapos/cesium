@@ -275,7 +275,7 @@ const workspaceSourceFiles = {
 /**
  * Generates export declaration from a file from a workspace.
  *
- * @param {string} workspace The workspace the file belongs to.
+ * @param {Workspace} workspace The workspace the file belongs to.
  * @param {string} file The file.
  * @returns {string} The export declaration.
  */
@@ -301,10 +301,9 @@ export async function createCesiumJs() {
   let contents = `export const VERSION = '${version}';\n`;
 
   // Iterate over each workspace and generate declarations for each file.
-  for (const workspace of Object.keys(workspaceSourceFiles)) {
-    const files = await globby(
-      workspaceSourceFiles[/** @type {Workspace} */ (workspace)],
-    );
+  for (const workspaceKey of Object.keys(workspaceSourceFiles)) {
+    const workspace = /** @type {Workspace} */ (workspaceKey);
+    const files = await globby(workspaceSourceFiles[workspace]);
     const declarations = files.map((file) =>
       generateDeclaration(workspace, file),
     );

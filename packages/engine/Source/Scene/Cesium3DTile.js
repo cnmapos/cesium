@@ -1267,6 +1267,7 @@ async function processArrayBuffer(
 
     if (tile.isDestroyed()) {
       // Tile is unloaded before the content can process
+      destroyUnattachedContent(content);
       return;
     }
 
@@ -1357,6 +1358,20 @@ function markTileAsEmptyContent(tile) {
   tile.hasRenderableContent = false;
 }
 
+/**
+ * Releases content that was constructed but never attached to its tile, which
+ * happens when the tile is destroyed while the payload is still decoding. Some
+ * content types register themselves with shared owners during construction, so
+ * dropping the reference alone would leak.
+ * @param {Cesium3DTileContent|undefined} content
+ * @private
+ */
+function destroyUnattachedContent(content) {
+  if (defined(content) && !content.isDestroyed()) {
+    content.destroy();
+  }
+}
+
 Cesium3DTile._isEmptyTile = isEmptyTile;
 
 /**
@@ -1385,6 +1400,7 @@ async function makeContent(tile, arrayBuffer) {
       codec.createContent(tileset, tile, tile._contentResource, arrayBuffer),
     );
     if (tile.isDestroyed()) {
+      destroyUnattachedContent(content);
       return;
     }
     return content;

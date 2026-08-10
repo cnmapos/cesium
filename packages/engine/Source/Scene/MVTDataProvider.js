@@ -35,6 +35,9 @@ import defined from "../Core/defined.js";
  * @property {number} [maximumRetiringLabels]
  * @property {number} [maximumLabelsPerTile]
  * @property {number} [maximumCachedGlyphs]
+ * @property {number} [minimumRebuildInterval]
+ * @property {number} [glyphReclaimMargin]
+ * @property {number} [maximumVisibleLabels]
  * @property {boolean} [renderGeometry]
  * @property {"mvt"|"geovis"} [format]
  * @property {number} [maximumScreenSpaceError]
@@ -86,6 +89,9 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
       0,
       Math.floor(options.maximumCachedGlyphs ?? 2048),
     );
+    this._minimumRebuildInterval = options.minimumRebuildInterval;
+    this._glyphReclaimMargin = options.glyphReclaimMargin;
+    this._maximumVisibleLabels = options.maximumVisibleLabels;
     this._cacheBytes =
       options.cacheBytes ??
       (this._renderGeometry ? undefined : labelOnlyCacheBytes);
@@ -116,7 +122,10 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @param {number} [options.labelTransitionSteps=4] Opacity steps in each label transition. A small value keeps rapid zoom and pan updates bounded.
    * @param {number} [options.maximumRetiringLabels=512] Maximum labels retained for fade-out after a tile switch. Excess labels are removed immediately to protect frame time during rapid navigation.
    * @param {number} [options.maximumLabelsPerTile=4096] Maximum label candidates retained from one tile. Higher-priority styles are kept first.
-   * @param {number} [options.maximumCachedGlyphs=2048] Maximum distinct glyphs retained by the label atlas before it is rebuilt. Set to 0 to disable atlas recycling.
+   * @param {number} [options.maximumCachedGlyphs=2048] Maximum distinct glyphs retained by the label atlas before it is rebuilt. Each glyph occupies roughly 68x68 atlas pixels, so 2048 glyphs need a 4096x4096 RGBA texture (about 67 MB). Set to 0 to disable atlas recycling.
+   * @param {number} [options.minimumRebuildInterval=10] Minimum seconds between label atlas rebuilds. Rebuilding re-rasterizes every visible glyph, so this bounds how often that cost can be paid.
+   * @param {number} [options.glyphReclaimMargin] Minimum number of unreferenced glyphs required before the atlas is rebuilt. Defaults to a quarter of `maximumCachedGlyphs`. A rebuild that would reclaim less than this is skipped, since it would discard and immediately re-rasterize the same glyphs.
+   * @param {number} [options.maximumVisibleLabels=1000] Maximum labels shown in one frame. Lower-priority labels are dropped, which keeps the set of live glyphs inside the atlas budget.
    * @param {boolean} [options.renderGeometry=true] Render point, line, and polygon geometry in addition to labels.
    * @param {"mvt"|"geovis"} [options.format="mvt"] PBF schema used by the tile service. Use `geovis` for GeoVis vector APIs.
    * @param {number} [options.maximumScreenSpaceError] Tile screen-space error. When omitted for GeoVis, it adapts from 16 at globe scale to 1 near street scale.
@@ -182,6 +191,9 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
         transitionSteps: this._labelTransitionSteps,
         maximumRetiringLabels: this._maximumRetiringLabels,
         maximumCachedGlyphs: this._maximumCachedGlyphs,
+        minimumRebuildInterval: this._minimumRebuildInterval,
+        glyphReclaimMargin: this._glyphReclaimMargin,
+        maximumVisibleLabels: this._maximumVisibleLabels,
       });
     }
   }

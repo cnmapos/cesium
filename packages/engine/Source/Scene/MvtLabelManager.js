@@ -5,9 +5,11 @@ import Cartesian3 from "../Core/Cartesian3.js";
 import Color from "../Core/Color.js";
 import getTimestamp from "../Core/getTimestamp.js";
 import Matrix4 from "../Core/Matrix4.js";
+import Rectangle from "../Core/Rectangle.js";
 import WebMercatorTilingScheme from "../Core/WebMercatorTilingScheme.js";
 import defined from "../Core/defined.js";
 import destroyObject from "../Core/destroyObject.js";
+import oneTimeWarning from "../Core/oneTimeWarning.js";
 // @ts-expect-error rbush does not ship declarations in this workspace.
 import RBush from "rbush";
 import HorizontalOrigin from "./HorizontalOrigin.js";
@@ -26,6 +28,15 @@ const duplicateTextDistance = 64.0;
 const scratchPosition = new Cartesian3();
 const scratchWorldPosition = new Cartesian3();
 const scratchWindowPosition = new Cartesian2();
+const scratchTileRectangle = new Rectangle();
+const scratchCollisionRectangle = {
+  minX: 0,
+  minY: 0,
+  maxX: 0,
+  maxY: 0,
+};
+const scratchFillColor = new Color();
+const scratchOutlineColor = new Color();
 
 /**
  * @typedef {object} MvtLabelManagerOptions
@@ -36,6 +47,9 @@ const scratchWindowPosition = new Cartesian2();
  * @property {number} [transitionSteps]
  * @property {number} [maximumRetiringLabels]
  * @property {number} [maximumCachedGlyphs]
+ * @property {number} [minimumRebuildInterval]
+ * @property {number} [glyphReclaimMargin]
+ * @property {number} [maximumVisibleLabels]
  */
 
 /**
@@ -65,6 +79,20 @@ class MvtLabelManager {
       0,
       Math.floor(options.maximumCachedGlyphs ?? 2048),
     );
+    this._minimumRebuildInterval = Math.max(
+      0,
+      options.minimumRebuildInterval ?? 10,
+    );
+    this._glyphReclaimMargin = Math.max(
+      0,
+      Math.floor(
+        options.glyphReclaimMargin ?? Math.floor(this._maximumCachedGlyphs / 4),
+      ),
+    );
+    this._maximumVisibleLabels = Math.max(
+      0,
+      Math.floor(options.maximumVisibleLabels ?? 1000),
+    );
     this._getTimestamp = getTimestamp;
     this._labelCollection = new LabelCollection({ scene: this._scene });
     /** @type {Set<*>} */
@@ -74,6 +102,14 @@ class MvtLabelManager {
     /** @type {Array<*>} */
     this._visibleCandidates = [];
     /** @type {Array<*>} */
+    this._nextVisibleCandidates = [];
+    /** @type {Set<*>} */
+    this._nextVisibleSet = new Set();
+    /** @type {Set<string>} */
+    this._acceptedIds = new Set();
+    /** @type {Map<string, Array<Cartesian2>>} */
+    this._textPositions = new Map();
+    /** @type {Array<*>} */
     this._retiringCandidates = [];
     this._collisionTree = new RBush();
     this._frameNumber = -1;
@@ -81,6 +117,7 @@ class MvtLabelManager {
     this._displayZoom = undefined;
     this._frameTileZoom = undefined;
     this._labelCollectionRebuilds = 0;
+    this._lastRebuildTime = undefined;
   }
 
   get enabled() {
@@ -152,12 +189,22 @@ class MvtLabelManager {
     }
 
     const scene = this._scene;
-    const previousVisibleCandidates = [...this._visibleCandidates];
-    const acceptedIds = new Set();
-    const textPositions = new Map();
-    const nextVisibleCandidates = [];
+    const previousVisibleCandidates = this._visibleCandidates;
+    const nextVisibleCandidates = this._nextVisibleCandidates;
+    const acceptedIds = this._acceptedIds;
+    const textPositions = this._textPositions;
+    const nextVisibleSet = this._nextVisibleSet;
+    nextVisibleCandidates.length = 0;
+    acceptedIds.clear();
+    textPositions.clear();
+    nextVisibleSet.clear();
     this._frameCandidates.sort(compareCandidates);
     for (const candidate of this._frameCandidates) {
+      // Candidates are priority-sorted, so the cap drops the least important
+      // labels. It also keeps the live glyph set inside the atlas budget.
+      if (nextVisibleCandidates.length >= this._maximumVisibleLabels) {
+        break;
+      }
       const style = this._styles[candidate.styleIndex];
       const styleZoom = this._displayZoom ?? candidate.tileZ;
       const dedupeKey = getCandidateDedupeKey(candidate);
@@ -183,6 +230,7 @@ class MvtLabelManager {
           candidate,
           style,
           windowPosition,
+          scratchCollisionRectangle,
         );
         if (this._collisionTree.collides(rectangle)) {
           continue;
@@ -190,7 +238,8 @@ class MvtLabelManager {
         if (isDuplicateText(textPositions, candidate.text, windowPosition)) {
           continue;
         }
-        this._collisionTree.insert(rectangle);
+        // The tree retains what it is given, so the scratch cannot be inserted.
+        this._collisionTree.insert({ ...rectangle });
       }
 
       this._reuseMatchingLabel(candidate);
@@ -203,18 +252,22 @@ class MvtLabelManager {
       );
       this._activateCandidate(candidate, style, this._frameTime);
       nextVisibleCandidates.push(candidate);
+      nextVisibleSet.add(candidate);
       if (defined(dedupeKey)) {
         acceptedIds.add(dedupeKey);
       }
     }
 
-    const nextVisibleSet = new Set(nextVisibleCandidates);
+    // Swap before retiring so the retire path splices the new array, matching
+    // the previous behavior where mutations to the old array were discarded.
+    this._visibleCandidates = nextVisibleCandidates;
     for (const candidate of previousVisibleCandidates) {
       if (!nextVisibleSet.has(candidate)) {
         this._retireCandidate(candidate, this._frameTime);
       }
     }
-    this._visibleCandidates = nextVisibleCandidates;
+    previousVisibleCandidates.length = 0;
+    this._nextVisibleCandidates = previousVisibleCandidates;
     this._updateTransitions(this._frameTime);
 
     // update is an internal primitive method, but it is the same lifecycle
@@ -349,8 +402,12 @@ class MvtLabelManager {
       return;
     }
     label.show = opacity > 0;
-    label.fillColor = withAlpha(style.fillColor, opacity);
-    label.outlineColor = withAlpha(style.outlineColor, opacity);
+    label.fillColor = withAlpha(style.fillColor, opacity, scratchFillColor);
+    label.outlineColor = withAlpha(
+      style.outlineColor,
+      opacity,
+      scratchOutlineColor,
+    );
   }
 
   /** @param {*} candidate */
@@ -382,10 +439,31 @@ class MvtLabelManager {
   }
 
   _rebuildLabelCollectionIfNeeded() {
+    const cachedGlyphs = getCachedGlyphCount(this._labelCollection);
     if (
       this._maximumCachedGlyphs === 0 ||
-      getCachedGlyphCount(this._labelCollection) <= this._maximumCachedGlyphs
+      cachedGlyphs <= this._maximumCachedGlyphs
     ) {
+      return;
+    }
+
+    if (
+      defined(this._lastRebuildTime) &&
+      elapsedSeconds(this._frameTime, this._lastRebuildTime) <
+        this._minimumRebuildInterval
+    ) {
+      return;
+    }
+
+    // Only glyphs that no live label references can be reclaimed. Rebuilding
+    // when the live set already fills the budget would discard and immediately
+    // re-rasterize the whole atlas, so leave it alone and report it instead.
+    const liveGlyphs = countLiveGlyphs(this._labelCollection);
+    if (cachedGlyphs - liveGlyphs < this._glyphReclaimMargin) {
+      oneTimeWarning(
+        "MvtLabelManager.glyphBudget",
+        `MVT labels reference ${liveGlyphs} distinct glyphs, at or above the ${this._maximumCachedGlyphs} glyph budget, so the glyph atlas cannot be shrunk. Lower maximumVisibleLabels or raise maximumCachedGlyphs.`,
+      );
       return;
     }
 
@@ -400,7 +478,9 @@ class MvtLabelManager {
       resetCandidateLabel(candidate);
     }
     this._retiringCandidates.length = 0;
+    this._visibleCandidates.length = 0;
     this._labelCollectionRebuilds++;
+    this._lastRebuildTime = this._frameTime;
   }
 
   isDestroyed() {
@@ -438,6 +518,29 @@ function getCachedGlyphCount(labelCollection) {
   return (
     labelCollection?._glyphBillboardCollection?.billboardTextureCache?.size ?? 0
   );
+}
+
+/**
+ * Counts the distinct glyphs still referenced by labels in the collection. The
+ * difference against the glyph cache size is how much a rebuild would reclaim.
+ * @param {*} labelCollection
+ * @returns {number}
+ */
+function countLiveGlyphs(labelCollection) {
+  const labels = labelCollection?._labels;
+  if (!Array.isArray(labels)) {
+    return 0;
+  }
+  const liveIds = new Set();
+  for (const label of labels) {
+    for (const glyph of label._glyphs ?? []) {
+      const id = glyph.billboardTexture?.id;
+      if (defined(id)) {
+        liveIds.add(id);
+      }
+    }
+  }
+  return liveIds.size;
 }
 
 /** @param {*} labelCollection */
@@ -497,7 +600,7 @@ function getViewZoom(frameState) {
 /** @param {Set<*>} entries @param {number} maximumTileZoom */
 /** @param {Map<string, Array<Cartesian2>>} textPositions @param {string} text @param {Cartesian2} position */
 function isDuplicateText(textPositions, text, position) {
-  const positions = textPositions.get(text);
+  let positions = textPositions.get(text);
   if (defined(positions)) {
     for (const previousPosition of positions) {
       const dx = position.x - previousPosition.x;
@@ -506,8 +609,11 @@ function isDuplicateText(textPositions, text, position) {
         return true;
       }
     }
+  } else {
+    positions = [];
+    textPositions.set(text, positions);
   }
-  textPositions.set(text, [...(positions ?? []), Cartesian2.clone(position)]);
+  positions.push(Cartesian2.clone(position));
   return false;
 }
 
@@ -531,9 +637,9 @@ function quantizeOpacity(opacity, steps) {
   return Math.round(Math.min(Math.max(opacity, 0), 1) * steps) / steps;
 }
 
-/** @param {Color} color @param {number} opacity */
-function withAlpha(color, opacity) {
-  const result = Color.clone(color);
+/** @param {Color} color @param {number} opacity @param {Color} result */
+function withAlpha(color, opacity, result) {
+  Color.clone(color, result);
   result.alpha *= opacity;
   return result;
 }
@@ -551,6 +657,13 @@ function isInsideViewport(scene, windowPosition) {
 
 /** @param {Array<*>} target @param {Array<*>} candidates */
 function removeCandidates(target, candidates) {
+  if (candidates.length === 1) {
+    const index = target.indexOf(candidates[0]);
+    if (index >= 0) {
+      target.splice(index, 1);
+    }
+    return;
+  }
   const removed = new Set(candidates);
   for (let i = target.length - 1; i >= 0; i--) {
     if (removed.has(target[i])) {
@@ -639,6 +752,7 @@ function getWorldPosition(candidate, result) {
     candidate.tileX,
     candidate.tileY,
     candidate.tileZ,
+    scratchTileRectangle,
   );
   const longitude =
     rectangle.west + (rectangle.east - rectangle.west) * candidate.x;
@@ -648,17 +762,16 @@ function getWorldPosition(candidate, result) {
   return Matrix4.multiplyByPoint(candidate.transform, scratchPosition, result);
 }
 
-/** @param {*} candidate @param {*} style @param {Cartesian2} position */
-function makeCollisionRectangle(candidate, style, position) {
+/** @param {*} candidate @param {*} style @param {Cartesian2} position @param {*} result */
+function makeCollisionRectangle(candidate, style, position, result) {
   const fontSize = parseFontSize(style.font);
   const width = Math.max(fontSize, estimateTextWidth(candidate.text, fontSize));
   const padding = style.collisionPadding;
-  return {
-    minX: position.x + style.pixelOffset.x - width * 0.5 - padding.x,
-    minY: position.y + style.pixelOffset.y - fontSize * 0.5 - padding.y,
-    maxX: position.x + style.pixelOffset.x + width * 0.5 + padding.x,
-    maxY: position.y + style.pixelOffset.y + fontSize * 0.5 + padding.y,
-  };
+  result.minX = position.x + style.pixelOffset.x - width * 0.5 - padding.x;
+  result.minY = position.y + style.pixelOffset.y - fontSize * 0.5 - padding.y;
+  result.maxX = position.x + style.pixelOffset.x + width * 0.5 + padding.x;
+  result.maxY = position.y + style.pixelOffset.y + fontSize * 0.5 + padding.y;
+  return result;
 }
 
 /** @param {*} style @returns {Cartesian2} */

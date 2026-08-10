@@ -422,6 +422,109 @@ describe("Scene/MvtLabelManager", function () {
     manager.destroy();
   });
 
+  it("does not rebuild when almost every cached glyph is still live", function () {
+    // The over-budget-but-unreclaimable case reports itself once.
+    spyOn(console, "warn");
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      maximumCachedGlyphs: 2,
+      glyphReclaimMargin: 2,
+    });
+    const candidate = createTestCandidate("city", "place/city");
+    candidate.label = {};
+    manager.addTile({}, tileCoordinates, [candidate]);
+    manager._labelCollection = createGlyphCacheStub(
+      ["A", "B", "C"],
+      ["A", "B"],
+    );
+
+    manager.beginFrame({ frameNumber: 1 });
+
+    // Only one of the three cached glyphs is reclaimable, below the margin.
+    expect(manager._labelCollectionRebuilds).toBe(0);
+    expect(candidate.label).toBeDefined();
+    manager.destroy();
+  });
+
+  it("does not rebuild again within the minimum rebuild interval", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      maximumCachedGlyphs: 1,
+      minimumRebuildInterval: 10,
+    });
+    let now = 1000;
+    manager._getTimestamp = function () {
+      return now;
+    };
+    manager._labelCollection = createGlyphCacheStub(["A", "B"], []);
+
+    manager.beginFrame({ frameNumber: 1 });
+    expect(manager._labelCollectionRebuilds).toBe(1);
+
+    now += 5000;
+    manager._labelCollection = createGlyphCacheStub(["A", "B"], []);
+    manager.beginFrame({ frameNumber: 2 });
+    expect(manager._labelCollectionRebuilds).toBe(1);
+
+    now += 6000;
+    manager._labelCollection = createGlyphCacheStub(["A", "B"], []);
+    manager.beginFrame({ frameNumber: 3 });
+    expect(manager._labelCollectionRebuilds).toBe(2);
+    manager.destroy();
+  });
+
+  it("shows no more labels than the visible label maximum", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      maximumVisibleLabels: 2,
+    });
+    let addedLabels = 0;
+    manager._labelCollection = {
+      add: function () {
+        addedLabels++;
+        return {};
+      },
+      remove: function () {},
+      update: function () {},
+      destroy: function () {},
+    };
+    const tile = { _selectedFrame: 1, computedTransform: Matrix4.IDENTITY };
+    const candidates = [0, 1, 2, 3, 4].map((index) =>
+      createTestCandidate(`city${index}`, `place/city${index}`),
+    );
+    manager.addTile(tile, tileCoordinates, candidates);
+
+    const frameState = { frameNumber: 1 };
+    manager.beginFrame(frameState);
+    manager.submitSelectedTiles(frameState);
+    manager.endFrame(frameState);
+
+    expect(addedLabels).toBe(2);
+    expect(manager._visibleCandidates.length).toBe(2);
+    manager.destroy();
+  });
+
+  function createGlyphCacheStub(cachedIds, liveIds) {
+    return {
+      _labels: [
+        {
+          _glyphs: liveIds.map((id) => ({ billboardTexture: { id } })),
+        },
+      ],
+      _glyphBillboardCollection: {
+        billboardTextureCache: new Map(cachedIds.map((id) => [id, {}])),
+      },
+      remove: function () {},
+      update: function () {},
+      destroy: function () {
+        return undefined;
+      },
+    };
+  }
+
   it("uses padded collisions and clamps labels to ground by default", function () {
     const manager = new MvtLabelManager({
       scene: undefined,

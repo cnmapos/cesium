@@ -17,6 +17,8 @@ describe("Scene/MVTDataProvider", function () {
     expect(provider._maximumRetiringLabels).toBe(512);
     expect(provider._maximumLabelsPerTile).toBe(4096);
     expect(provider._maximumCachedGlyphs).toBe(2048);
+    expect(provider._minimumRebuildInterval).toBeUndefined();
+    expect(provider._maximumVisibleLabels).toBeUndefined();
     expect(provider._usesAdaptiveScreenSpaceError).toBe(true);
     provider.destroy();
   });
@@ -60,6 +62,27 @@ describe("Scene/MVTDataProvider", function () {
     );
 
     expect(provider._maxZoom).toBe(18);
+    provider.destroy();
+  });
+
+  it("passes glyph budget limits to the label manager", function () {
+    const provider = new MVTDataProvider(
+      "https://example.invalid/{z}/{x}/{y}",
+      {
+        labelStyles: [{ textField: "name" }],
+        maximumCachedGlyphs: 512,
+        minimumRebuildInterval: 30,
+        glyphReclaimMargin: 64,
+        maximumVisibleLabels: 250,
+      },
+    );
+    provider._configureTileset({});
+    const labelManager = provider._labelManager;
+
+    expect(labelManager._maximumCachedGlyphs).toBe(512);
+    expect(labelManager._minimumRebuildInterval).toBe(30);
+    expect(labelManager._glyphReclaimMargin).toBe(64);
+    expect(labelManager._maximumVisibleLabels).toBe(250);
     provider.destroy();
   });
 
