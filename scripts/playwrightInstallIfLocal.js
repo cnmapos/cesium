@@ -26,6 +26,8 @@ console.log(
 const result = spawnSync("playwright", ["install", "--with-deps"], {
   stdio: "inherit",
   env: process.env,
+  // On Windows `playwright` is a .cmd shim, which spawnSync can't execute directly.
+  shell: process.platform === "win32",
 });
 
 process.exit(result.status ?? 1);
