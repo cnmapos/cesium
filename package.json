@@ -1,6 +1,6 @@
 {
   "name": "@hztxi/cesium",
-  "version": "1.141.2",
+  "version": "1.141.3",
   "description": "CesiumJS is a JavaScript library for creating 3D globes and 2D maps in a web browser without a plugin.",
   "homepage": "http://cesium.com/cesiumjs/",
   "license": "Apache-2.0",
@@ -100,7 +100,7 @@
     "karma-spec-reporter": "^0.0.36",
     "lebab": "^3.2.8",
     "markdownlint-cli": "^0.48.0",
-    "merge-stream": "^2.0.0", 
+    "merge-stream": "^2.0.0",
     "mkdirp": "^3.0.1",
     "node-fetch": "^3.2.10",
     "open": "^11.0.0",
