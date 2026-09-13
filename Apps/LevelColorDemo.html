@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Level Color Profile 可视化演示</title>
+    <link
+      rel="stylesheet"
+      href="../Build/CesiumUnminified/Widgets/widgets.css"
+    />
+    <style>
+      html,
+      body,
+      #cesiumContainer {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      #panel {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 999;
+        background: rgba(30, 30, 30, 0.85);
+        color: #eee;
+        padding: 12px 14px;
+        border-radius: 8px;
+        font:
+          13px/1.6 system-ui,
+          "Microsoft YaHei",
+          sans-serif;
+        min-width: 320px;
+        max-width: 400px;
+      }
+      #panel h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+      #panel hr {
+        border: none;
+        border-top: 1px solid #555;
+        margin: 10px 0 6px;
+      }
+      label {
+        display: block;
+        margin: 6px 0 2px;
+      }
+      button {
+        margin: 4px 4px 0 0;
+        padding: 4px 10px;
+        cursor: pointer;
+        background: #2d6a4f;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      button:hover {
+        background: #40916c;
+      }
+      button.gray {
+        background: #555;
+      }
+      button.gray:hover {
+        background: #777;
+      }
+      input[type="range"] {
+        width: 100%;
+      }
+      #status {
+        color: #ffd479;
+        margin-top: 6px;
+      }
+      #levels {
+        font-family: monospace;
+        margin-top: 4px;
+        color: #8fe388;
+        min-height: 18px;
+      }
+      #profileTable {
+        border-collapse: collapse;
+        margin-top: 8px;
+        font-family: monospace;
+        font-size: 11px;
+      }
+      #profileTable td,
+      #profileTable th {
+        border: 1px solid #555;
+        padding: 2px 3px;
+        text-align: right;
+      }
+      #profileTable th[colspan] {
+        text-align: center;
+      }
+      #profileTable input[type="number"] {
+        width: 42px;
+        box-sizing: border-box;
+        text-align: right;
+        background: #222;
+        color: #8fe388;
+        border: 1px solid #555;
+        border-radius: 3px;
+        font: 10px/1.4 monospace;
+        padding: 1px 2px;
+        -moz-appearance: textfield;
+        appearance: textfield;
+      }
+      #profileTable input[type="number"]::-webkit-outer-spin-button,
+      #profileTable input[type="number"]::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      #profileTable button.del {
+        padding: 0 6px;
+        margin: 0;
+        background: #7a2e2e;
+      }
+      #profileTable button.del:hover {
+        background: #a44444;
+      }
+      .row {
+        margin-top: 6px;
+      }
+      .hint {
+        color: #aaa;
+        font-size: 11px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+
+    <div id="panel">
+      <h3>Level Color Profile 演示</h3>
+      <div style="color: #aaa; font-size: 12px">
+        ArcGIS World Imagery · 舟山海岸锚点 · z4–18 · ref 12
+      </div>
+
+      <label
+        ><input type="checkbox" id="enable" checked /> 启用层级颜色校正</label
+      >
+      <label>校正强度 strength：<span id="strengthVal">0.80</span></label>
+      <input
+        type="range"
+        id="strength"
+        min="0"
+        max="1"
+        step="0.05"
+        value="0.8"
+      />
+      <label>边缘渐变宽度 edgeBlend：<span id="edgeVal">0.20</span></label>
+      <input
+        type="range"
+        id="edge"
+        min="0"
+        max="0.45"
+        step="0.05"
+        value="0.2"
+      />
+      <label
+        ><input type="checkbox" id="cross" checked /> 内容渐变（祖先影像
+        cross-fade）</label
+      >
+      <label
+        >瓦片加载精度 maximumScreenSpaceError：<span id="sseVal"
+          >1.0</span
+        ></label
+      >
+      <input type="range" id="sse" min="0.5" max="4" step="0.1" value="1" />
+      <label
+        ><input type="checkbox" id="uniform" /> 统一层级
+        uniformLevelMode（视图内瓦片收敛到同一 LOD）</label
+      >
+      <label
+        >参考距离 reference：
+        <select id="uniformRef" style="width: auto">
+          <option value="center" selected>center 视角中心</option>
+          <option value="nearest">nearest 最近瓦片</option>
+        </select>
+        偏移上限 K：<span id="uniformDevVal">3</span>
+      </label>
+      <input type="range" id="uniformDev" min="0" max="8" step="1" value="3" />
+
+      <label
+        >导入自定义 profile：<input type="file" id="file" accept=".json"
+      /></label>
+      <hr />
+
+      <label
+        >参考层级 referenceLevel（仅表格标记）：
+        <input
+          type="number"
+          id="refLevel"
+          min="0"
+          max="24"
+          style="width: 48px"
+        />
+      </label>
+      <div class="row">
+        <button id="exportBtn">导出 JSON</button>
+        <button id="copyBtn">复制 JSON</button>
+        <button id="resetBtn" class="gray">重置内置</button>
+      </div>
+      <hr />
+
+      <button id="view1">接缝视角 z15–17</button>
+      <button id="view2">中空 z14/15</button>
+      <button id="view3">高空视角</button>
+      <br />
+      <button id="anim">自动下降动画</button>
+      <button id="stop" class="gray">停止</button>
+
+      <div id="status">状态：内置 ArcGIS profile</div>
+      <div id="levels">加载中…</div>
+      <table id="profileTable"></table>
+      <div class="row">
+        <label style="display: inline-block"
+          >添加层级 z：
+          <input
+            type="number"
+            id="addLevel"
+            min="0"
+            max="24"
+            placeholder="0–24"
+            style="width: 52px"
+          />
+        </label>
+        <button id="addBtn">添加</button>
+      </div>
+
+      <div class="hint">
+        提示：该源在 z11→12 和 z13→14 附近存在镶嵌源切换（原始接缝可达 20+
+        灰阶）， 校正效果明显；strength 调到 1.0 可消除大部分残留。
+        边缘渐变把跨层边界残留的台阶摊成缓坡（0 = 关闭，建议 0.15–0.25），
+        只对相邻更粗层的边界生效，首次开启会编译着色器，轻微卡顿属正常。
+        内容渐变在边缘带内把本层影像与祖先影像（粗邻层渲染的那一级）做像素级混合，
+        接缝两侧在边界处完全一致，可消除参数渐变处理不了的内容型色差（如镶嵌源切换）。
+        动画下降过程中可随时开关做 A/B 对比。 profile
+        表格可直接编辑：scale/offset 改动即时生效（输入范围与引擎一致：scale
+        0.5–2、 offset ±0.25，引擎按 strength 折算后还会再夹紧）；×
+        删除该层；添加层级默认恒等校正。 导出/复制得到与仓库根目录
+        level-color-profile.json 同构的 JSON，可导入复用或回写仓库。
+      </div>
+    </div>
+
+    <script src="../Build/CesiumUnminified/Cesium.js"></script>
+    <script>
+      /* global Cesium */
+      (function () {
+        // 与仓库根目录 level-color-profile.json 相同；页面启动时会尝试
+        // 通过 http 拉取该文件保持同步，失败（如 file:// 打开）则使用此内置副本。
+        const EMBEDDED_PROFILE = {
+          strength: 0.8,
+          referenceLevel: 12,
+          levels: {
+            4: {
+              scale: [1.3263, 1.3732, 0.8088],
+              offset: [-0.1494, -0.25, -0.0103],
+            },
+            5: {
+              scale: [1.2341, 1.4204, 0.7185],
+              offset: [-0.0966, -0.247, 0.032],
+            },
+            6: {
+              scale: [1.2565, 1.4203, 0.7545],
+              offset: [-0.1125, -0.25, 0.0158],
+            },
+            7: {
+              scale: [1.2047, 1.5138, 0.8886],
+              offset: [-0.0625, -0.2221, 0.0145],
+            },
+            8: {
+              scale: [1.2385, 1.4945, 1.06],
+              offset: [-0.0402, -0.1526, 0.0073],
+            },
+            9: {
+              scale: [1.2236, 1.32, 1.1869],
+              offset: [-0.0228, -0.0656, 0.009],
+            },
+            10: {
+              scale: [1.1605, 1.2285, 1.1637],
+              offset: [0.0008, -0.0283, 0.0327],
+            },
+            11: {
+              scale: [1.097, 1.1248, 1.0936],
+              offset: [0.0155, 0.0042, 0.0508],
+            },
+            12: { scale: [1, 1, 1], offset: [0, 0, 0] },
+            13: {
+              scale: [0.9629, 0.9584, 0.9245],
+              offset: [0.0071, 0.0092, 0.0163],
+            },
+            14: {
+              scale: [0.6941, 0.673, 0.5],
+              offset: [0.0125, 0.0388, 0.0798],
+            },
+            15: {
+              scale: [0.6488, 0.6312, 0.5],
+              offset: [0.0033, 0.0326, 0.065],
+            },
+            16: {
+              scale: [0.6397, 0.622, 0.5],
+              offset: [0.0077, 0.0371, 0.0657],
+            },
+            17: {
+              scale: [0.6326, 0.6151, 0.5],
+              offset: [0.0071, 0.0373, 0.0639],
+            },
+            18: {
+              scale: [0.6237, 0.6028, 0.5],
+              offset: [0.0021, 0.0364, 0.0593],
+            },
+          },
+        };
+
+        const ANCHOR = { lon: 121.9, lat: 30.0 };
+
+        const provider = new Cesium.UrlTemplateImageryProvider({
+          url: "https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}.png",
+          maximumLevel: 18,
+          credit: "Esri",
+        });
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+          baseLayer: new Cesium.ImageryLayer(provider),
+          baseLayerPicker: false,
+          geocoder: false,
+          homeButton: false,
+          sceneModePicker: false,
+          navigationHelpButton: false,
+          animation: false,
+          timeline: false,
+          fullscreenButton: false,
+          infoBox: false,
+          selectionIndicator: false,
+          contextOptions: { webgl: { preserveDrawingBuffer: true } },
+        });
+        window.viewer = viewer;
+
+        // 初始视角：低空浅俯仰，影像 z15/16/17 同屏混合，层级边界可见
+        viewer.scene.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            ANCHOR.lon,
+            ANCHOR.lat,
+            600,
+          ),
+          orientation: {
+            heading: 0,
+            pitch: Cesium.Math.toRadians(-35),
+            roll: 0,
+          },
+        });
+
+        const $ = (id) => document.getElementById(id);
+        const enableEl = $("enable");
+        const strengthEl = $("strength");
+        const strengthValEl = $("strengthVal");
+        const edgeEl = $("edge");
+        const edgeValEl = $("edgeVal");
+        const crossEl = $("cross");
+        const sseEl = $("sse");
+        const sseValEl = $("sseVal");
+        viewer.scene.globe.maximumScreenSpaceError = parseFloat(sseEl.value);
+        const statusEl = $("status");
+        const levelsEl = $("levels");
+        const tableEl = $("profileTable");
+
+        // 深拷贝并补全缺省字段，保证表格可以原地编辑而不污染 EMBEDDED_PROFILE
+        function toEditable(p) {
+          const levels = {};
+          for (const key of Object.keys(p.levels || {})) {
+            const e = p.levels[key];
+            if (!e) {
+              continue;
+            }
+            const scale = Array.isArray(e.scale)
+              ? e.scale.slice(0, 3)
+              : [1, 1, 1];
+            const offset = Array.isArray(e.offset)
+              ? e.offset.slice(0, 3)
+              : [0, 0, 0];
+            while (scale.length < 3) {
+              scale.push(1);
+            }
+            while (offset.length < 3) {
+              offset.push(0);
+            }
+            levels[key] = { scale, offset };
+          }
+          return {
+            strength: isFinite(p.strength) ? p.strength : 1.0,
+            referenceLevel: p.referenceLevel,
+            levels,
+          };
+        }
+
+        let currentProfile = toEditable(EMBEDDED_PROFILE);
+        let profileName = "内置 ArcGIS profile";
+
+        function applyProfile() {
+          const layer = viewer.scene.globe.imageryLayers.get(0);
+          if (enableEl.checked) {
+            // 重新赋值触发引擎重新归一化；浅拷贝避免复用已归一化的内部对象
+            layer.levelColorProfile = {
+              ...currentProfile,
+              strength: parseFloat(strengthEl.value),
+            };
+            layer.levelColorEdgeBlend = parseFloat(edgeEl.value);
+            layer.levelColorEdgeCrossFade = crossEl.checked;
+            const n = Object.keys(currentProfile.levels).length;
+            statusEl.textContent = `状态：${profileName} · 开启 · strength ${strengthEl.value} · edge ${edgeEl.value} · ${n} 层`;
+          } else {
+            layer.levelColorProfile = undefined;
+            layer.levelColorEdgeBlend = 0;
+            statusEl.textContent = `状态：${profileName} · 已关闭（原始渲染）`;
+          }
+        }
+
+        function renderProfileTable() {
+          const p = currentProfile;
+          const ref = Number(p.referenceLevel);
+          const levels = Object.keys(p.levels)
+            .map(Number)
+            .sort((a, b) => a - b);
+          $("refLevel").value =
+            p.referenceLevel === undefined ? "" : String(ref);
+          const limits = { scale: [0.5, 2.0], offset: [-0.25, 0.25] };
+          let html =
+            "<tr><th>z</th><th colspan='3'>scale R/G/B</th><th colspan='3'>offset R/G/B</th><th></th></tr>";
+          for (const lv of levels) {
+            const e = p.levels[lv];
+            const cells = ["scale", "offset"]
+              .map((k) =>
+                [0, 1, 2]
+                  .map(
+                    (i) =>
+                      `<td><input type="number" data-level="${lv}" data-k="${k}" data-i="${i}" ` +
+                      `value="${Number(e[k][i]).toFixed(3)}" step="0.005" ` +
+                      `min="${limits[k][0]}" max="${limits[k][1]}" /></td>`,
+                  )
+                  .join(""),
+              )
+              .join("");
+            const mark = lv === ref ? "◀" : "";
+            html += `<tr><td>${lv}${mark}</td>${cells}<td><button class="del" data-del="${lv}" title="删除层级">×</button></td></tr>`;
+          }
+          tableEl.innerHTML = html;
+        }
+
+        enableEl.addEventListener("change", applyProfile);
+        strengthEl.addEventListener("input", () => {
+          strengthValEl.textContent = parseFloat(strengthEl.value).toFixed(2);
+          applyProfile();
+        });
+        edgeEl.addEventListener("input", () => {
+          edgeValEl.textContent = parseFloat(edgeEl.value).toFixed(2);
+          applyProfile();
+        });
+        crossEl.addEventListener("change", applyProfile);
+        sseEl.addEventListener("input", () => {
+          sseValEl.textContent = parseFloat(sseEl.value).toFixed(1);
+          viewer.scene.globe.maximumScreenSpaceError = parseFloat(sseEl.value);
+        });
+
+        // 统一层级：开启后视野内瓦片按同一参考距离选层，跨层接缝从源头消失
+        // （代价是倾斜视角下瓦片量增大，故同步调大 tileCacheSize 防 LRU 抖动）。
+        // 需重新构建引擎（CesiumUnminified）后生效；旧构建下赋值无副作用。
+        const uniformEl = $("uniform");
+        const uniformRefEl = $("uniformRef");
+        const uniformDevEl = $("uniformDev");
+        const uniformDevValEl = $("uniformDevVal");
+        function applyUniformLevelMode() {
+          const globe = viewer.scene.globe;
+          if (uniformEl.checked) {
+            globe.tileCacheSize = 1000;
+            globe.uniformLevelMode = {
+              enabled: true,
+              reference: uniformRefEl.value,
+              maxDeviationLevels: parseInt(uniformDevEl.value, 10),
+              pitchRangeDegrees: [-50, -25],
+            };
+          } else {
+            globe.uniformLevelMode = undefined;
+            globe.tileCacheSize = 100;
+          }
+        }
+        uniformEl.addEventListener("change", applyUniformLevelMode);
+        uniformRefEl.addEventListener("change", applyUniformLevelMode);
+        uniformDevEl.addEventListener("input", () => {
+          uniformDevValEl.textContent = uniformDevEl.value;
+          if (uniformEl.checked) {
+            applyUniformLevelMode();
+          }
+        });
+
+        $("file").addEventListener("change", (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) {
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const p = JSON.parse(reader.result);
+              if (!p || !p.levels || Object.keys(p.levels).length === 0) {
+                throw new Error("missing levels");
+              }
+              currentProfile = toEditable(p);
+              profileName = `自定义 ${file.name}`;
+              syncStrengthSlider(currentProfile.strength);
+              renderProfileTable();
+              applyProfile();
+            } catch (e) {
+              statusEl.textContent = "导入失败：不是有效的 profile JSON";
+            }
+          };
+          reader.readAsText(file);
+        });
+
+        // ---- profile 表格编辑：改动即时写入 currentProfile 并重新应用 ----
+        tableEl.addEventListener("input", (ev) => {
+          const t = ev.target;
+          if (t.tagName !== "INPUT" || t.type !== "number") {
+            return;
+          }
+          const v = parseFloat(t.value);
+          if (!isFinite(v)) {
+            return;
+          }
+          const entry = currentProfile.levels[t.dataset.level];
+          if (!entry) {
+            return;
+          }
+          const lim = t.dataset.k === "scale" ? [0.5, 2.0] : [-0.25, 0.25];
+          entry[t.dataset.k][Number(t.dataset.i)] = Math.min(
+            Math.max(v, lim[0]),
+            lim[1],
+          );
+          applyProfile();
+        });
+
+        // 失焦时把显示值归一到夹紧后的 3 位小数，避免输入框与存储不一致
+        tableEl.addEventListener("change", (ev) => {
+          const t = ev.target;
+          if (t.tagName !== "INPUT" || t.type !== "number") {
+            return;
+          }
+          const entry = currentProfile.levels[t.dataset.level];
+          if (!entry) {
+            return;
+          }
+          t.value = Number(entry[t.dataset.k][Number(t.dataset.i)]).toFixed(3);
+        });
+
+        tableEl.addEventListener("click", (ev) => {
+          const btn = ev.target.closest("button.del");
+          if (!btn) {
+            return;
+          }
+          delete currentProfile.levels[btn.dataset.del];
+          renderProfileTable();
+          applyProfile();
+        });
+
+        $("refLevel").addEventListener("change", (ev) => {
+          const lv = parseInt(ev.target.value, 10);
+          currentProfile.referenceLevel = isFinite(lv) ? lv : undefined;
+          renderProfileTable(); // 仅移动 ◀ 标记，引擎不读取该字段
+        });
+
+        $("addBtn").addEventListener("click", () => {
+          const lv = parseInt($("addLevel").value, 10);
+          if (!isFinite(lv) || lv < 0 || lv > 24) {
+            statusEl.textContent = "层级号无效（0–24）";
+            return;
+          }
+          if (currentProfile.levels[lv]) {
+            statusEl.textContent = `z${lv} 已存在，可直接编辑`;
+            return;
+          }
+          currentProfile.levels[lv] = { scale: [1, 1, 1], offset: [0, 0, 0] };
+          $("addLevel").value = "";
+          renderProfileTable();
+          applyProfile();
+        });
+
+        function syncStrengthSlider(s) {
+          if (!isFinite(s)) {
+            return;
+          }
+          strengthEl.value = String(s);
+          strengthValEl.textContent = parseFloat(strengthEl.value).toFixed(2);
+        }
+
+        // 导出内容与页面当前应用的一致：strength 取滑块值
+        function profileForOutput() {
+          return { ...currentProfile, strength: parseFloat(strengthEl.value) };
+        }
+
+        $("exportBtn").addEventListener("click", () => {
+          const blob = new Blob([JSON.stringify(profileForOutput(), null, 2)], {
+            type: "application/json",
+          });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "level-color-profile.json";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+
+        $("copyBtn").addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(
+              JSON.stringify(profileForOutput(), null, 2),
+            );
+            statusEl.textContent = "已复制 profile JSON 到剪贴板";
+          } catch (e) {
+            statusEl.textContent =
+              "复制失败（file:// 或非安全上下文），请用导出";
+          }
+        });
+
+        $("resetBtn").addEventListener("click", () => {
+          currentProfile = toEditable(EMBEDDED_PROFILE);
+          profileName = "内置 ArcGIS profile";
+          syncStrengthSlider(currentProfile.strength);
+          renderProfileTable();
+          applyProfile();
+        });
+
+        function flyOrSet(h, pitch) {
+          viewer.scene.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(
+              ANCHOR.lon,
+              ANCHOR.lat,
+              h,
+            ),
+            orientation: {
+              heading: 0,
+              pitch: Cesium.Math.toRadians(pitch),
+              roll: 0,
+            },
+          });
+        }
+        $("view1").addEventListener("click", () => flyOrSet(600, -35));
+        $("view2").addEventListener("click", () => flyOrSet(1200, -35));
+        $("view3").addEventListener("click", () => flyOrSet(2500, -30));
+
+        // 连续下降穿越多个 LOD 边界；期间可随时切换开关对比接缝
+        const ANIM_LEGS = [30000, 8000, 2500, 800, 300];
+        function runAnim(i) {
+          if (i >= ANIM_LEGS.length) {
+            return;
+          }
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(
+              ANCHOR.lon,
+              ANCHOR.lat,
+              ANIM_LEGS[i],
+            ),
+            orientation: {
+              heading: 0,
+              pitch: Cesium.Math.toRadians(-35),
+              roll: 0,
+            },
+            duration: 6,
+            complete: () => runAnim(i + 1),
+          });
+        }
+        $("anim").addEventListener("click", () => runAnim(0));
+        $("stop").addEventListener("click", () => viewer.camera.cancelFlight());
+
+        // 实时显示当前渲染的影像层级（注意：影像 z 比表面瓦片层级细一级）
+        setInterval(() => {
+          try {
+            const tiles = viewer.scene.globe._surface._tilesToRender;
+            const counts = {};
+            for (const t of tiles) {
+              const ti = t.data && t.data.imagery && t.data.imagery[0];
+              const lv =
+                (ti && ti.readyImagery && ti.readyImagery.level) || t.level;
+              counts[lv] = (counts[lv] || 0) + 1;
+            }
+            const text = Object.keys(counts)
+              .sort((a, b) => a - b)
+              .map((lv) => `z${lv}×${counts[lv]}`)
+              .join("  ");
+            levelsEl.textContent = text || "加载中…";
+          } catch (e) {
+            // ignore during teardown
+          }
+        }, 400);
+
+        renderProfileTable();
+
+        // http 环境下尝试同步根目录的 level-color-profile.json
+        fetch("../level-color-profile.json")
+          .then((r) => (r.ok ? r.json() : Promise.reject()))
+          .then((p) => {
+            currentProfile = toEditable(p);
+            profileName = "level-color-profile.json（仓库根目录）";
+            syncStrengthSlider(currentProfile.strength);
+            renderProfileTable();
+            applyProfile();
+          })
+          .catch(() => {});
+
+        applyProfile();
+      })();
+    </script>
+  </body>
+</html>

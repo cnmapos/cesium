@@ -1756,6 +1756,36 @@ function createTileUniformMap(frameState, globeSurfaceTileProvider) {
     u_dayTextureOneOverGamma: function () {
       return this.properties.dayTextureOneOverGamma;
     },
+    u_dayTextureToneGain: function () {
+      return this.properties.dayTextureToneGain;
+    },
+    u_dayTextureToneBias: function () {
+      return this.properties.dayTextureToneBias;
+    },
+    u_dayTextureToneEdgeGain: function () {
+      return this.properties.dayTextureToneEdgeGain;
+    },
+    u_dayTextureToneEdgeBias: function () {
+      return this.properties.dayTextureToneEdgeBias;
+    },
+    u_dayTextureToneEdgeBlend: function () {
+      return this.properties.dayTextureToneEdgeBlend;
+    },
+    u_dayTextureCrossTexture: function () {
+      return this.properties.dayTextureCrossTexture;
+    },
+    u_dayTextureCrossTranslationAndScale: function () {
+      return this.properties.dayTextureCrossTranslationAndScale;
+    },
+    u_dayTextureCrossGain: function () {
+      return this.properties.dayTextureCrossGain;
+    },
+    u_dayTextureCrossBias: function () {
+      return this.properties.dayTextureCrossBias;
+    },
+    u_dayTextureCrossBlend: function () {
+      return this.properties.dayTextureCrossBlend;
+    },
     u_dayIntensity: function () {
       return this.properties.dayIntensity;
     },
@@ -1896,6 +1926,16 @@ function createTileUniformMap(frameState, globeSurfaceTileProvider) {
       dayTextureHue: [],
       dayTextureSaturation: [],
       dayTextureOneOverGamma: [],
+      dayTextureToneGain: [],
+      dayTextureToneBias: [],
+      dayTextureToneEdgeGain: [],
+      dayTextureToneEdgeBias: [],
+      dayTextureToneEdgeBlend: [],
+      dayTextureCrossTexture: [],
+      dayTextureCrossTranslationAndScale: [],
+      dayTextureCrossGain: [],
+      dayTextureCrossBias: [],
+      dayTextureCrossBlend: [],
       dayTextureSplit: [],
       dayTextureCutoutRectangles: [],
       dayIntensity: 0.0,
@@ -2123,6 +2163,110 @@ const surfaceShaderSetOptionsScratch = {
 
 const defaultUndergroundColor = Color.TRANSPARENT;
 const defaultUndergroundColorAlphaByDistance = new NearFarScalar();
+
+// Flattens the per-texture-count render buckets into one array, rebuilt at
+// most once per frame. Shared by every levelColorEdgeBlend neighbor lookup.
+function getRenderedTilesFlat(tileProvider, frameNumber) {
+  let flat = tileProvider._edgeBlendTiles;
+  if (!defined(flat) || tileProvider._edgeBlendTilesFrame !== frameNumber) {
+    flat = [];
+    const buckets = tileProvider._tilesToRenderByTextureCount;
+    for (let bucketIndex = 0; bucketIndex < buckets.length; ++bucketIndex) {
+      const bucket = buckets[bucketIndex];
+      if (!defined(bucket)) {
+        continue;
+      }
+      for (let tileIndex = 0; tileIndex < bucket.length; ++tileIndex) {
+        flat.push(bucket[tileIndex]);
+      }
+    }
+    tileProvider._edgeBlendTiles = flat;
+    tileProvider._edgeBlendTilesFrame = frameNumber;
+  }
+  return flat;
+}
+
+// Finds the rendered tile sharing the given geographic edge of `rectangle`.
+// Edge order matches the shader uniforms: 0 = south, 1 = east, 2 = north,
+// 3 = west. When several tiles share the edge (finer neighbors), the one
+// with the longest shared extent wins. Tiles straddling the antimeridian do
+// not test as adjacent, so no fade is applied across it.
+const edgeAdjacencyEpsilon = CesiumMath.EPSILON12;
+
+// Reused by findAdjacentRenderedTile callers that need the shared-edge length
+// (dominant coarser-neighbor selection for the content cross-fade).
+const adjacentRenderedTileScratch = { tile: undefined, overlap: 0.0 };
+
+function findAdjacentRenderedTile(renderedTiles, rectangle, edge, result) {
+  result = defined(result) ? result : adjacentRenderedTileScratch;
+  let best;
+  let bestOverlap = 0.0;
+  for (let tileIndex = 0; tileIndex < renderedTiles.length; ++tileIndex) {
+    const other = renderedTiles[tileIndex];
+    const otherRectangle = other.rectangle;
+    let overlapStart;
+    let overlapEnd;
+    if (edge === 0) {
+      if (
+        Math.abs(otherRectangle.north - rectangle.south) > edgeAdjacencyEpsilon
+      ) {
+        continue;
+      }
+      overlapStart = Math.max(otherRectangle.west, rectangle.west);
+      overlapEnd = Math.min(otherRectangle.east, rectangle.east);
+    } else if (edge === 1) {
+      if (
+        Math.abs(otherRectangle.west - rectangle.east) > edgeAdjacencyEpsilon
+      ) {
+        continue;
+      }
+      overlapStart = Math.max(otherRectangle.south, rectangle.south);
+      overlapEnd = Math.min(otherRectangle.north, rectangle.north);
+    } else if (edge === 2) {
+      if (
+        Math.abs(otherRectangle.south - rectangle.north) > edgeAdjacencyEpsilon
+      ) {
+        continue;
+      }
+      overlapStart = Math.max(otherRectangle.west, rectangle.west);
+      overlapEnd = Math.min(otherRectangle.east, rectangle.east);
+    } else {
+      if (
+        Math.abs(otherRectangle.east - rectangle.west) > edgeAdjacencyEpsilon
+      ) {
+        continue;
+      }
+      overlapStart = Math.max(otherRectangle.south, rectangle.south);
+      overlapEnd = Math.min(otherRectangle.north, rectangle.north);
+    }
+    const overlap = overlapEnd - overlapStart;
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      best = other;
+    }
+  }
+  result.tile = best;
+  result.overlap = bestOverlap;
+  return result;
+}
+
+function getNeighborImageryLevel(neighborTile, imageryLayer) {
+  const imageryList = neighborTile.data.imagery;
+  if (!defined(imageryList)) {
+    return undefined;
+  }
+  for (let tileIndex = 0; tileIndex < imageryList.length; ++tileIndex) {
+    const readyImagery = imageryList[tileIndex].readyImagery;
+    if (defined(readyImagery) && readyImagery.imageryLayer === imageryLayer) {
+      return readyImagery.level;
+    }
+  }
+  return undefined;
+}
+
+// Per-edge neighbor imagery levels for the texture unit currently being
+// filled; reused across units and tiles every frame.
+const edgeNeighborLevelsScratch = new Array(4);
 
 function addDrawCommandsForTile(tileProvider, tile, frameState) {
   const surfaceTile = tile.data;
@@ -2601,6 +2745,10 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     let applyGamma = false;
     let applyAlpha = false;
     let applyDayNightAlpha = false;
+    let applyToneMatch = false;
+    let applyToneMatchEdge = false;
+    let applyToneMatchCross = false;
+    let crossUnits = 0;
     let applySplit = false;
     let applyCutout = false;
     let applyColorToAlpha = false;
@@ -2702,6 +2850,217 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
         uniformMapProperties.dayTextureOneOverGamma[numberOfDayTextures] !==
           1.0 / ImageryLayer.DEFAULT_GAMMA;
 
+      const levelCorrection = imageryLayer._getLevelColorCorrection(
+        imagery.level,
+      );
+      applyToneMatch = applyToneMatch || defined(levelCorrection);
+
+      let toneGain =
+        uniformMapProperties.dayTextureToneGain[numberOfDayTextures];
+      if (!defined(toneGain)) {
+        toneGain = new Cartesian3(1.0, 1.0, 1.0);
+        uniformMapProperties.dayTextureToneGain[numberOfDayTextures] = toneGain;
+      }
+      if (defined(levelCorrection)) {
+        Cartesian3.clone(levelCorrection.gain, toneGain);
+      } else {
+        toneGain.x = 1.0;
+        toneGain.y = 1.0;
+        toneGain.z = 1.0;
+      }
+
+      let toneBias =
+        uniformMapProperties.dayTextureToneBias[numberOfDayTextures];
+      if (!defined(toneBias)) {
+        toneBias = new Cartesian3(0.0, 0.0, 0.0);
+        uniformMapProperties.dayTextureToneBias[numberOfDayTextures] = toneBias;
+      }
+      if (defined(levelCorrection)) {
+        Cartesian3.clone(levelCorrection.bias, toneBias);
+      } else {
+        toneBias.x = 0.0;
+        toneBias.y = 0.0;
+        toneBias.z = 0.0;
+      }
+
+      // Edge-band fade of this texture's correction toward the adjacent
+      // coarser tile's correction. Only the finer side of a LOD boundary
+      // fades; same-level and finer neighbors leave the edge at this
+      // texture's own correction, so the fade is a no-op there.
+      const levelEdgeBlend = imageryLayer.levelColorEdgeBlend;
+      if (defined(levelCorrection) && levelEdgeBlend > 0.0) {
+        applyToneMatchEdge = true;
+      }
+      const edgeBaseIndex = numberOfDayTextures * 4;
+      // Cross-fade bookkeeping: imagery level of each edge's neighbor, plus
+      // the dominant (longest shared edge) coarser neighbor whose ancestor
+      // texture will be bound for content cross-fading below.
+      let dominantCrossLevel;
+      let dominantCrossOverlap = 0.0;
+      for (let edgeIndex = 0; edgeIndex < 4; ++edgeIndex) {
+        let edgeGain =
+          uniformMapProperties.dayTextureToneEdgeGain[
+            edgeBaseIndex + edgeIndex
+          ];
+        if (!defined(edgeGain)) {
+          edgeGain = new Cartesian3();
+          uniformMapProperties.dayTextureToneEdgeGain[
+            edgeBaseIndex + edgeIndex
+          ] = edgeGain;
+        }
+        let edgeBias =
+          uniformMapProperties.dayTextureToneEdgeBias[
+            edgeBaseIndex + edgeIndex
+          ];
+        if (!defined(edgeBias)) {
+          edgeBias = new Cartesian3();
+          uniformMapProperties.dayTextureToneEdgeBias[
+            edgeBaseIndex + edgeIndex
+          ] = edgeBias;
+        }
+
+        edgeNeighborLevelsScratch[edgeIndex] = undefined;
+        uniformMapProperties.dayTextureToneEdgeBlend[
+          edgeBaseIndex + edgeIndex
+        ] = 0.0;
+        if (defined(levelCorrection) && levelEdgeBlend > 0.0) {
+          const neighbor = findAdjacentRenderedTile(
+            getRenderedTilesFlat(tileProvider, frameState.frameNumber),
+            tile.rectangle,
+            edgeIndex,
+          );
+          const neighborLevel = defined(neighbor.tile)
+            ? getNeighborImageryLevel(neighbor.tile, imageryLayer)
+            : undefined;
+          edgeNeighborLevelsScratch[edgeIndex] = neighborLevel;
+          if (defined(neighborLevel) && neighborLevel < imagery.level) {
+            if (neighbor.overlap > dominantCrossOverlap) {
+              dominantCrossOverlap = neighbor.overlap;
+              dominantCrossLevel = neighborLevel;
+            }
+            const neighborCorrection =
+              imageryLayer._getLevelColorCorrection(neighborLevel);
+            if (defined(neighborCorrection)) {
+              Cartesian3.clone(neighborCorrection.gain, edgeGain);
+              Cartesian3.clone(neighborCorrection.bias, edgeBias);
+              uniformMapProperties.dayTextureToneEdgeBlend[
+                edgeBaseIndex + edgeIndex
+              ] = levelEdgeBlend;
+              continue;
+            }
+          }
+        }
+        Cartesian3.clone(toneGain, edgeGain);
+        Cartesian3.clone(toneBias, edgeBias);
+      }
+
+      // Content cross-fade: bind the ancestor imagery at the dominant coarser
+      // neighbor's level (the very source texture the coarser side renders).
+      // Near edges facing that neighbor, the shader blends the tile's full
+      // rendered result with the ancestor's rendering, making both sides of
+      // the boundary pixel-identical at the shared edge regardless of whether
+      // the residual step came from correction limits or content differences.
+      // Falls back to the correction fade above when the ancestor texture is
+      // not resident, the level gap is too large (the ancestor would be
+      // minified beyond recognition), the sampler budget is exhausted, or the
+      // layer opts out. Edges whose coarser neighbor is at a different level
+      // keep the correction fade (single bound ancestor per texture).
+      // Every unit gets valid values (identity when unbound): a command's
+      // shader is the CROSS variant if ANY unit bound, and the pooled uniform
+      // arrays must not contain holes or stale entries for the others.
+      let crossGain =
+        uniformMapProperties.dayTextureCrossGain[numberOfDayTextures];
+      if (!defined(crossGain)) {
+        crossGain = new Cartesian3(1.0, 1.0, 1.0);
+        uniformMapProperties.dayTextureCrossGain[numberOfDayTextures] =
+          crossGain;
+      }
+      let crossBias =
+        uniformMapProperties.dayTextureCrossBias[numberOfDayTextures];
+      if (!defined(crossBias)) {
+        crossBias = new Cartesian3(0.0, 0.0, 0.0);
+        uniformMapProperties.dayTextureCrossBias[numberOfDayTextures] =
+          crossBias;
+      }
+      let crossTranslationAndScale =
+        uniformMapProperties.dayTextureCrossTranslationAndScale[
+          numberOfDayTextures
+        ];
+      if (!defined(crossTranslationAndScale)) {
+        crossTranslationAndScale = new Cartesian4(0.0, 0.0, 1.0, 1.0);
+        uniformMapProperties.dayTextureCrossTranslationAndScale[
+          numberOfDayTextures
+        ] = crossTranslationAndScale;
+      }
+
+      let crossTexture = texture;
+      if (
+        defined(levelCorrection) &&
+        levelEdgeBlend > 0.0 &&
+        imageryLayer.levelColorEdgeCrossFade &&
+        defined(dominantCrossLevel) &&
+        imagery.level - dominantCrossLevel <= 4 &&
+        numberOfDayTextures + crossUnits + 1 <= maxTextures
+      ) {
+        let ancestor = imagery.parent;
+        while (defined(ancestor) && ancestor.level > dominantCrossLevel) {
+          ancestor = ancestor.parent;
+        }
+        const ancestorTexture =
+          defined(ancestor) &&
+          ancestor.level === dominantCrossLevel &&
+          ancestor.state === ImageryState.READY
+            ? tileImagery.useWebMercatorT
+              ? ancestor.textureWebMercator
+              : ancestor.texture
+            : undefined;
+        if (defined(ancestorTexture)) {
+          crossTexture = ancestorTexture;
+          ++crossUnits;
+          applyToneMatchCross = true;
+
+          const crossCorrection =
+            imageryLayer._getLevelColorCorrection(dominantCrossLevel);
+          if (defined(crossCorrection)) {
+            Cartesian3.clone(crossCorrection.gain, crossGain);
+            Cartesian3.clone(crossCorrection.bias, crossBias);
+          }
+          imageryLayer._calculateImageryTranslationAndScale(
+            tile,
+            ancestor,
+            tileImagery.useWebMercatorT,
+            crossTranslationAndScale,
+          );
+
+          for (let edgeIndex = 0; edgeIndex < 4; ++edgeIndex) {
+            uniformMapProperties.dayTextureCrossBlend[
+              edgeBaseIndex + edgeIndex
+            ] =
+              edgeNeighborLevelsScratch[edgeIndex] === dominantCrossLevel
+                ? levelEdgeBlend
+                : 0.0;
+          }
+        }
+      }
+      if (crossTexture === texture) {
+        crossGain.x = 1.0;
+        crossGain.y = 1.0;
+        crossGain.z = 1.0;
+        crossBias.x = 0.0;
+        crossBias.y = 0.0;
+        crossBias.z = 0.0;
+        crossTranslationAndScale.x = 0.0;
+        crossTranslationAndScale.y = 0.0;
+        crossTranslationAndScale.z = 1.0;
+        crossTranslationAndScale.w = 1.0;
+        for (let edgeIndex = 0; edgeIndex < 4; ++edgeIndex) {
+          uniformMapProperties.dayTextureCrossBlend[edgeBaseIndex + edgeIndex] =
+            0.0;
+        }
+      }
+      uniformMapProperties.dayTextureCrossTexture[numberOfDayTextures] =
+        crossTexture;
+
       uniformMapProperties.dayTextureSplit[numberOfDayTextures] =
         imageryLayer.splitDirection;
       applySplit =
@@ -2784,6 +3143,18 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     // trim texture array to the used length so we don't end up using old textures
     // which might get destroyed eventually
     uniformMapProperties.dayTextures.length = numberOfDayTextures;
+    uniformMapProperties.dayTextureToneEdgeGain.length =
+      numberOfDayTextures * 4;
+    uniformMapProperties.dayTextureToneEdgeBias.length =
+      numberOfDayTextures * 4;
+    uniformMapProperties.dayTextureToneEdgeBlend.length =
+      numberOfDayTextures * 4;
+    uniformMapProperties.dayTextureCrossTexture.length = numberOfDayTextures;
+    uniformMapProperties.dayTextureCrossTranslationAndScale.length =
+      numberOfDayTextures;
+    uniformMapProperties.dayTextureCrossGain.length = numberOfDayTextures;
+    uniformMapProperties.dayTextureCrossBias.length = numberOfDayTextures;
+    uniformMapProperties.dayTextureCrossBlend.length = numberOfDayTextures * 4;
     uniformMapProperties.waterMask = waterMaskTexture;
     Cartesian4.clone(
       waterMaskTranslationAndScale,
@@ -2817,6 +3188,9 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     surfaceShaderSetOptions.applyHue = applyHue;
     surfaceShaderSetOptions.applySaturation = applySaturation;
     surfaceShaderSetOptions.applyGamma = applyGamma;
+    surfaceShaderSetOptions.applyToneMatch = applyToneMatch;
+    surfaceShaderSetOptions.applyToneMatchEdge = applyToneMatchEdge;
+    surfaceShaderSetOptions.applyToneMatchCross = applyToneMatchCross;
     surfaceShaderSetOptions.applyAlpha = applyAlpha;
     surfaceShaderSetOptions.applyDayNightAlpha = applyDayNightAlpha;
     surfaceShaderSetOptions.applySplit = applySplit;
@@ -2859,7 +3233,7 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
       }
     }
 
-    let boundingVolume = command.boundingVolume;
+    const boundingVolume = command.boundingVolume;
     const orientedBoundingBox = command.orientedBoundingBox;
 
     if (frameState.mode !== SceneMode.SCENE3D) {
@@ -2878,7 +3252,9 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
       );
 
       if (frameState.mode === SceneMode.MORPHING) {
-        boundingVolume = BoundingSphere.union(
+        // The result is written into boundingVolume in place (the same object
+        // referenced by command.boundingVolume), so the return value is unused.
+        BoundingSphere.union(
           tileBoundingRegion.boundingSphere,
           boundingVolume,
           boundingVolume,

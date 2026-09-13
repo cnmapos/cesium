@@ -106,6 +106,9 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
   const applyHue = options.applyHue;
   const applySaturation = options.applySaturation;
   const applyGamma = options.applyGamma;
+  const applyToneMatch = options.applyToneMatch;
+  const applyToneMatchEdge = options.applyToneMatchEdge;
+  const applyToneMatchCross = options.applyToneMatchCross;
   const applyAlpha = options.applyAlpha;
   const applyDayNightAlpha = options.applyDayNightAlpha;
   const applySplit = options.applySplit;
@@ -197,7 +200,10 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
       (showUndergroundColor << 30) |
       (translucent << 31)) >>>
       0) +
-    (applyDayNightAlpha ? 0x100000000 : 0);
+    (applyDayNightAlpha ? 0x100000000 : 0) +
+    (applyToneMatch ? 0x200000000 : 0) +
+    (applyToneMatchEdge ? 0x400000000 : 0) +
+    (applyToneMatchCross ? 0x800000000 : 0);
 
   let currentClippingShaderState = 0;
   if (defined(clippingPlanes) && clippingPlanes.length > 0) {
@@ -278,6 +284,15 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
     }
     if (applyGamma) {
       fs.defines.push("APPLY_GAMMA");
+    }
+    if (applyToneMatch) {
+      fs.defines.push("APPLY_TONE_MATCH");
+    }
+    if (applyToneMatchEdge) {
+      fs.defines.push("APPLY_TONE_MATCH_EDGE");
+    }
+    if (applyToneMatchCross) {
+      fs.defines.push("APPLY_TONE_MATCH_CROSS");
     }
     if (applyAlpha) {
       fs.defines.push("APPLY_ALPHA");
@@ -396,6 +411,49 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
     }
 
     for (let i = 0; i < numberOfDayTextures; ++i) {
+      if (applyToneMatchEdge) {
+        computeDayColor += `\
+        vec3 toneGain${i} = u_dayTextureToneGain[${i}];
+        vec3 toneBias${i} = u_dayTextureToneBias[${i}];
+        {
+            // Per-edge sequential blend; edges with width 0 (same-level / finer /
+            // no neighbor) must NOT participate: an argmin over all four edge
+            // distances truncates the band into diagonal wedges at corners where
+            // an active edge meets an inactive one.
+            vec2 toneEdgeUV${i} = textureCoordinates.xy;
+            float toneEdgeW${i};
+            float toneEdgeT${i};
+            toneEdgeW${i} = u_dayTextureToneEdgeBlend[${i * 4}];
+            if (toneEdgeW${i} > 0.0) {
+                toneEdgeT${i} = smoothstep(0.0, toneEdgeW${i}, toneEdgeUV${i}.y);
+                toneGain${i} = mix(u_dayTextureToneEdgeGain[${i * 4}], toneGain${i}, toneEdgeT${i});
+                toneBias${i} = mix(u_dayTextureToneEdgeBias[${i * 4}], toneBias${i}, toneEdgeT${i});
+            }
+            toneEdgeW${i} = u_dayTextureToneEdgeBlend[${i * 4 + 1}];
+            if (toneEdgeW${i} > 0.0) {
+                toneEdgeT${i} = smoothstep(0.0, toneEdgeW${i}, 1.0 - toneEdgeUV${i}.x);
+                toneGain${i} = mix(u_dayTextureToneEdgeGain[${i * 4 + 1}], toneGain${i}, toneEdgeT${i});
+                toneBias${i} = mix(u_dayTextureToneEdgeBias[${i * 4 + 1}], toneBias${i}, toneEdgeT${i});
+            }
+            toneEdgeW${i} = u_dayTextureToneEdgeBlend[${i * 4 + 2}];
+            if (toneEdgeW${i} > 0.0) {
+                toneEdgeT${i} = smoothstep(0.0, toneEdgeW${i}, 1.0 - toneEdgeUV${i}.y);
+                toneGain${i} = mix(u_dayTextureToneEdgeGain[${i * 4 + 2}], toneGain${i}, toneEdgeT${i});
+                toneBias${i} = mix(u_dayTextureToneEdgeBias[${i * 4 + 2}], toneBias${i}, toneEdgeT${i});
+            }
+            toneEdgeW${i} = u_dayTextureToneEdgeBlend[${i * 4 + 3}];
+            if (toneEdgeW${i} > 0.0) {
+                toneEdgeT${i} = smoothstep(0.0, toneEdgeW${i}, toneEdgeUV${i}.x);
+                toneGain${i} = mix(u_dayTextureToneEdgeGain[${i * 4 + 3}], toneGain${i}, toneEdgeT${i});
+                toneBias${i} = mix(u_dayTextureToneEdgeBias[${i * 4 + 3}], toneBias${i}, toneEdgeT${i});
+            }
+        }
+`;
+      }
+      if (applyToneMatchCross) {
+        computeDayColor += `\
+        vec4 tonePrevColor${i} = color;\n`;
+      }
       if (hasImageryLayerCutout) {
         computeDayColor += `\
         cutoutAndColorResult = u_dayTextureCutoutRectangles[${i}];\n\
@@ -420,6 +478,20 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
             ${applyHue ? `u_dayTextureHue[${i}]` : "0.0"},\n\
             ${applySaturation ? `u_dayTextureSaturation[${i}]` : "0.0"},\n\
             ${applyGamma ? `u_dayTextureOneOverGamma[${i}]` : "0.0"},\n\
+            ${
+              applyToneMatchEdge
+                ? `toneGain${i}`
+                : applyToneMatch
+                  ? `u_dayTextureToneGain[${i}]`
+                  : "vec3(1.0)"
+            },\n\
+            ${
+              applyToneMatchEdge
+                ? `toneBias${i}`
+                : applyToneMatch
+                  ? `u_dayTextureToneBias[${i}]`
+                  : "vec3(0.0)"
+            },\n\
             ${applySplit ? `u_dayTextureSplit[${i}]` : "0.0"},\n\
             ${colorToAlpha ? `u_colorsToAlpha[${i}]` : "vec4(0.0)"},\n\
             nightBlend\);\n`;
@@ -427,6 +499,65 @@ GlobeSurfaceShaderSet.prototype.getShaderProgram = function (options) {
         computeDayColor +=
           "\
         color = czm_branchFreeTernary(texelUnclipped, cutoutAndColorResult, color);\n";
+      }
+      if (applyToneMatchCross) {
+        computeDayColor += `\
+        if (u_dayTextureCrossBlend[${i * 4}] + u_dayTextureCrossBlend[${i * 4 + 1}] + u_dayTextureCrossBlend[${i * 4 + 2}] + u_dayTextureCrossBlend[${i * 4 + 3}] > 0.0) {
+            vec4 crossResult${i} = sampleAndBlend(
+                tonePrevColor${i},
+                u_dayTextureCrossTexture[${i}],
+                u_dayTextureUseWebMercatorT[${i}] ? textureCoordinates.xz : textureCoordinates.xy,
+                u_dayTextureTexCoordsRectangle[${i}],
+                u_dayTextureCrossTranslationAndScale[${i}],
+                ${applyAlpha ? `u_dayTextureAlpha[${i}]` : "1.0"},
+                ${applyDayNightAlpha ? `u_dayTextureNightAlpha[${i}]` : "1.0"},
+                ${applyDayNightAlpha ? `u_dayTextureDayAlpha[${i}]` : "1.0"},
+                ${applyBrightness ? `u_dayTextureBrightness[${i}]` : "0.0"},
+                ${applyContrast ? `u_dayTextureContrast[${i}]` : "0.0"},
+                ${applyHue ? `u_dayTextureHue[${i}]` : "0.0"},
+                ${applySaturation ? `u_dayTextureSaturation[${i}]` : "0.0"},
+                ${applyGamma ? `u_dayTextureOneOverGamma[${i}]` : "0.0"},
+                u_dayTextureCrossGain[${i}],
+                u_dayTextureCrossBias[${i}],
+                ${applySplit ? `u_dayTextureSplit[${i}]` : "0.0"},
+                ${colorToAlpha ? `u_colorsToAlpha[${i}]` : "vec4(0.0)"},
+                nightBlend);
+${
+  hasImageryLayerCutout
+    ? `\
+            crossResult${i} = czm_branchFreeTernary(texelUnclipped, crossResult${i}, tonePrevColor${i});\n`
+    : ""
+}\
+            // Only edges with a positive width participate; combining by min over
+            // active edges keeps the fade band anchored to the seam. An argmin over
+            // all four distances lets a width-0 edge win near active/inactive
+            // corners, truncating the band into periodic unblended wedges.
+            float crossT${i} = 1.0;
+            float crossW${i};
+            float crossTOne${i};
+            crossW${i} = u_dayTextureCrossBlend[${i * 4}];
+            if (crossW${i} > 0.0) {
+                crossTOne${i} = smoothstep(0.0, crossW${i}, textureCoordinates.y);
+                crossT${i} = min(crossT${i}, crossTOne${i});
+            }
+            crossW${i} = u_dayTextureCrossBlend[${i * 4 + 1}];
+            if (crossW${i} > 0.0) {
+                crossTOne${i} = smoothstep(0.0, crossW${i}, 1.0 - textureCoordinates.x);
+                crossT${i} = min(crossT${i}, crossTOne${i});
+            }
+            crossW${i} = u_dayTextureCrossBlend[${i * 4 + 2}];
+            if (crossW${i} > 0.0) {
+                crossTOne${i} = smoothstep(0.0, crossW${i}, 1.0 - textureCoordinates.y);
+                crossT${i} = min(crossT${i}, crossTOne${i});
+            }
+            crossW${i} = u_dayTextureCrossBlend[${i * 4 + 3}];
+            if (crossW${i} > 0.0) {
+                crossTOne${i} = smoothstep(0.0, crossW${i}, textureCoordinates.x);
+                crossT${i} = min(crossT${i}, crossTOne${i});
+            }
+            color = mix(crossResult${i}, color, crossT${i});
+        }
+`;
       }
     }
 

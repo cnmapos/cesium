@@ -98,6 +98,50 @@ function Globe(ellipsoid) {
   this.maximumScreenSpaceError = 2;
 
   /**
+   * Gets or sets the uniform level-of-detail mode configuration. When enabled,
+   * tile refinement is evaluated against a single per-frame reference distance
+   * instead of each tile's own distance to the camera, so the tiles in view
+   * converge on one LOD level instead of a distance-dependent mix of levels.
+   * This eliminates visible cross-level seams (e.g. between differently-styled
+   * imagery levels) at the cost of loading more tiles in tilted views.
+   *
+   * The object has the following fields:
+   * <ul>
+   *   <li><code>enabled</code>: set to <code>true</code> to activate the mode.</li>
+   *   <li><code>reference</code>: which distance all tiles are evaluated against.
+   *       <code>"center"</code> (default) uses the distance from the camera to the
+   *       globe along the center of the view; <code>"nearest"</code> uses the
+   *       nearest visible tile distance from the previous frame, which selects
+   *       the highest detail level in view (more tiles).</li>
+   *   <li><code>maxDeviationLevels</code>: caps how many levels above the natural
+   *       LOD far tiles may be forced to refine (default <code>3</code>). Each
+   *       allowed level roughly quadruples the extra tile count toward the
+   *       horizon; lower values are cheaper, higher values are more uniform.</li>
+   *   <li><code>pitchRangeDegrees</code>: a <code>[full, none]</code> pair of pitch
+   *       angles in degrees (e.g. <code>[-50, -25]</code>) between which the effect
+   *       fades out as the view approaches the horizon. Leave undefined or pass
+   *       <code>null</code> to keep it fully engaged regardless of pitch, which is
+   *       appropriate for offline rendering.</li>
+   * </ul>
+   * Applies in {@link SceneMode.SCENE3D} and {@link SceneMode.COLUMBUS_VIEW};
+   * true 2D ({@link SceneMode.SCENE2D}) already uses distance-independent
+   * screen-space error and is unaffected.
+   *
+   * @type {object|undefined}
+   * @default undefined
+   *
+   * @example
+   * // Offline video export: full uniformity, no pitch gating
+   * globe.uniformLevelMode = {
+   *   enabled: true,
+   *   reference: "center",
+   *   maxDeviationLevels: 4,
+   *   pitchRangeDegrees: null,
+   * };
+   */
+  this.uniformLevelMode = undefined;
+
+  /**
    * The size of the terrain tile cache, expressed as a number of tiles.  Any additional
    * tiles beyond this number will be freed, as long as they aren't needed for rendering
    * this frame.  A larger number will consume more memory but will show detail faster
@@ -1015,6 +1059,7 @@ Globe.prototype.beginFrame = function (frameState) {
     }
 
     surface.maximumScreenSpaceError = this.maximumScreenSpaceError;
+    surface.uniformLevelMode = this.uniformLevelMode;
     surface.tileCacheSize = this.tileCacheSize;
     surface.loadingDescendantLimit = this.loadingDescendantLimit;
     surface.preloadAncestors = this.preloadAncestors;

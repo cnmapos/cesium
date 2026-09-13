@@ -26,6 +26,39 @@ uniform float u_dayTextureBrightness[TEXTURE_UNITS];
 uniform float u_dayTextureContrast[TEXTURE_UNITS];
 #endif
 
+#ifdef APPLY_TONE_MATCH
+uniform vec3 u_dayTextureToneGain[TEXTURE_UNITS];
+uniform vec3 u_dayTextureToneBias[TEXTURE_UNITS];
+#endif
+
+#ifdef APPLY_TONE_MATCH_EDGE
+// Per-texture fade targets at the four geographic edges of the surface tile
+// (index order: 0 = south, 1 = east, 2 = north, 3 = west).
+// u_dayTextureToneEdgeBlend holds one band width per geographic edge as a
+// fraction of the tile extent; only edges with a coarser neighbor get a
+// positive width, so same-level/finer edges never participate in the fade
+// (an edge that faded toward the texture's own correction would reset the
+// fade contributed by another edge near their corner).
+uniform vec3 u_dayTextureToneEdgeGain[TEXTURE_UNITS * 4];
+uniform vec3 u_dayTextureToneEdgeBias[TEXTURE_UNITS * 4];
+uniform float u_dayTextureToneEdgeBlend[TEXTURE_UNITS * 4];
+#endif
+
+#ifdef APPLY_TONE_MATCH_CROSS
+// Per-texture ancestor imagery for content cross-fading at edges facing a
+// coarser neighbor: near such an edge the tile blends its full rendered result
+// with the ancestor's rendering (ancestor texture sampled with the ancestor
+// level's correction), making both sides of the boundary identical at the
+// shared edge. u_dayTextureCrossBlend holds one band width per geographic edge
+// (0 = south, 1 = east, 2 = north, 3 = west); an edge only fades when its
+// neighbor's imagery level matches the bound ancestor's level.
+uniform sampler2D u_dayTextureCrossTexture[TEXTURE_UNITS];
+uniform vec4 u_dayTextureCrossTranslationAndScale[TEXTURE_UNITS];
+uniform vec3 u_dayTextureCrossGain[TEXTURE_UNITS];
+uniform vec3 u_dayTextureCrossBias[TEXTURE_UNITS];
+uniform float u_dayTextureCrossBlend[TEXTURE_UNITS * 4];
+#endif
+
 #ifdef APPLY_HUE
 uniform float u_dayTextureHue[TEXTURE_UNITS];
 #endif
@@ -199,6 +232,8 @@ vec4 sampleAndBlend(
     float textureHue,
     float textureSaturation,
     float textureOneOverGamma,
+    vec3 textureToneGain,
+    vec3 textureToneBias,
     float split,
     vec4 colorToAlpha,
     float nightBlend)
@@ -226,6 +261,13 @@ vec4 sampleAndBlend(
     vec4 value = texture(textureToSample, textureCoordinates);
     vec3 color = value.rgb;
     float alpha = value.a;
+
+#ifdef APPLY_TONE_MATCH
+    // Applied directly after sampling so the affine correction, which is fitted
+    // in source-image color space, commutes with the identical transforms that
+    // follow for both the tile and the imagery it replaces.
+    color = color * textureToneGain + textureToneBias;
+#endif
 
 #ifdef APPLY_COLOR_TO_ALPHA
     vec3 colorDiff = abs(color.rgb - colorToAlpha.rgb);
@@ -690,3 +732,4 @@ vec4 computeWaterColor(vec3 positionEyeCoordinates, vec2 textureCoordinates, mat
 }
 
 #endif // #ifdef SHOW_REFLECTIVE_OCEAN
+

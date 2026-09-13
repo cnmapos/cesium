@@ -4,6 +4,7 @@ import defined from "../Core/defined.js";
 import DeveloperError from "../Core/DeveloperError.js";
 import Event from "../Core/Event.js";
 import getTimestamp from "../Core/getTimestamp.js";
+import IntersectionTests from "../Core/IntersectionTests.js";
 import CesiumMath from "../Core/Math.js";
 import Matrix4 from "../Core/Matrix4.js";
 import OrthographicFrustum from "../Core/OrthographicFrustum.js";
@@ -108,6 +109,34 @@ function QuadtreePrimitive(options) {
    * @default 2
    */
   this.maximumScreenSpaceError = options.maximumScreenSpaceError ?? 2;
+
+  /**
+   * Gets or sets the uniform level-of-detail mode configuration, pushed down
+   * from {@link Globe#uniformLevelMode} every frame. When enabled, tile
+   * refinement is evaluated against a single per-frame reference distance
+   * instead of each tile's own distance, so visible tiles converge on one
+   * level instead of a distance-dependent mix. See updateUniformLevelState
+   * for the recognized fields.
+   *
+   * @type {object|undefined}
+   * @default undefined
+   */
+  this.uniformLevelMode = undefined;
+
+  // Per-frame uniform-level state, recomputed in beginFrame and consumed by
+  // screenSpaceError. version marks the uniformLevelMode implementation
+  // revision (1: initial, 2: nearest-fallback + clamp for Columbus); it lets
+  // callers detect which engine build they are actually running against.
+  this._uniformLevelState = {
+    version: 2,
+    active: false,
+    engage: 0.0,
+    referenceDistance: undefined,
+    deviationFactor: 8.0,
+  };
+  this._nearestTileDistanceThisFrame = undefined;
+  this._nearestTileDistanceLastFrame = undefined;
+  this._uniformLevelFrameNumber = -1;
 
   /**
    * Gets or sets the maximum number of tiles that will be retained in the tile cache.
@@ -342,6 +371,8 @@ QuadtreePrimitive.prototype.beginFrame = function (frameState) {
   this._tileProvider.initialize(frameState);
 
   clearTileLoadQueue(this);
+
+  updateUniformLevelState(this, frameState);
 
   if (this._debug.suspendLodUpdate) {
     return;
@@ -721,6 +752,20 @@ function visitTile(
   const debug = primitive._debug;
 
   ++debug.tilesVisited;
+
+  // Track the nearest visible tile distance for uniform-level mode's
+  // "nearest" reference. computeTileVisibility has already refreshed
+  // tile._distance for this frame by the time a tile is visited.
+  const uniformMode = primitive.uniformLevelMode;
+  if (defined(uniformMode) && uniformMode.enabled === true) {
+    const tileDistance = tile._distance;
+    if (defined(tileDistance)) {
+      const nearest = primitive._nearestTileDistanceThisFrame;
+      if (!defined(nearest) || tileDistance < nearest) {
+        primitive._nearestTileDistanceThisFrame = tileDistance;
+      }
+    }
+  }
 
   primitive._tileReplacementQueue.markTileRendered(tile);
   tile.updateCustomData();
@@ -1245,6 +1290,165 @@ function visitIfVisible(
   tile._lastSelectionResultFrame = frameState.frameNumber;
 }
 
+const uniformLevelScratchUp = new Cartesian3();
+const uniformLevelScratchRay = new Ray();
+
+/**
+ * Recomputes the per-frame uniform-level state consumed by screenSpaceError.
+ *
+ * Uniform-level mode makes tiles in view converge on one LOD level by
+ * evaluating refinement against a single per-frame reference distance instead
+ * of each tile's own distance:
+ *
+ *   reference: "center" (default) uses the camera-to-globe-center distance
+ *              along the view ray; "nearest" uses the distance of the nearest
+ *              visible tile from the previous frame.
+ *   maxDeviationLevels (default 3) caps how many levels above the natural LOD
+ *              far tiles may be forced to refine, bounding the tile-count
+ *              increase toward the horizon.
+ *   pitchRangeDegrees (default undefined = always engaged) is a [full, none]
+ *              pair of pitch angles; the effect fades out between them as the
+ *              view approaches the horizon. Pass null or leave undefined to
+ *              keep it fully engaged (e.g. for offline export).
+ *
+ * The effect is blended in by an engage factor, and the reference distance is
+ * EMA-smoothed (snapping across large jumps, e.g. camera cuts during export)
+ * so the selected level does not flap frame to frame.
+ *
+ * @private
+ */
+function updateUniformLevelState(primitive, frameState) {
+  const state = primitive._uniformLevelState;
+  state.active = false;
+  state.engage = 0.0;
+
+  // Roll over nearest-tile-distance tracking once per frame. Multiple render
+  // passes can occur within one frame (as in 2D), so key on frame number.
+  if (primitive._uniformLevelFrameNumber !== frameState.frameNumber) {
+    primitive._uniformLevelFrameNumber = frameState.frameNumber;
+    primitive._nearestTileDistanceLastFrame =
+      primitive._nearestTileDistanceThisFrame;
+    primitive._nearestTileDistanceThisFrame = undefined;
+  }
+
+  const mode = primitive.uniformLevelMode;
+  if (!defined(mode) || mode.enabled !== true) {
+    // Drop stale smoothing state so re-enabling starts fresh.
+    state.referenceDistance = undefined;
+    return;
+  }
+
+  // The 3D SSE path (perspective frustum) is the distance-dependent one, and
+  // it is used in both SCENE3D and Columbus view, so both need the mode.
+  // True 2D (SCENE2D) SSE is already distance-independent.
+  const isColumbusView = frameState.mode === SceneMode.COLUMBUS_VIEW;
+  if (frameState.mode !== SceneMode.SCENE3D && !isColumbusView) {
+    return;
+  }
+
+  const camera = frameState.camera;
+  const alignment = CesiumMath.clamp(
+    -Cartesian3.dot(
+      Cartesian3.normalize(camera.positionWC, uniformLevelScratchUp),
+      camera.directionWC,
+    ),
+    0.0,
+    1.0,
+  );
+  // alignment is 1.0 looking straight down and 0.0 at or above the horizon.
+
+  let engage = 1.0;
+  const pitchRange = mode.pitchRangeDegrees;
+  if (defined(pitchRange) && pitchRange !== null) {
+    const fullAlignment = Math.sin(
+      CesiumMath.toRadians(Math.abs(pitchRange[0])),
+    );
+    const noneAlignment = Math.sin(
+      CesiumMath.toRadians(Math.abs(pitchRange[1])),
+    );
+    const alignmentRange = Math.max(fullAlignment - noneAlignment, 1e-6);
+    let t = (alignment - noneAlignment) / alignmentRange;
+    t = CesiumMath.clamp(t, 0.0, 1.0);
+    engage = t * t * (3.0 - 2.0 * t);
+  }
+  if (engage <= 0.0) {
+    return;
+  }
+
+  let referenceDistance;
+  const nearestDistance = primitive._nearestTileDistanceLastFrame;
+  if (mode.reference === "nearest") {
+    referenceDistance = nearestDistance;
+  } else if (isColumbusView) {
+    // In Columbus view the flattened map is the x = 0 plane in world
+    // coordinates (see pickMapColumbusView): the center-of-view distance is
+    // the view ray parameter where it crosses that plane.
+    const directionX = camera.directionWC.x;
+    if (directionX !== 0.0) {
+      const scalar = -camera.positionWC.x / directionX;
+      referenceDistance = scalar > 0.0 ? scalar : undefined;
+    }
+    // The plane math assumes the default Columbus embedding; a camera
+    // reference transform (lookAt etc.) or animation-driven position can
+    // break the sign assumptions. Fall back to the tracked nearest tile
+    // distance, which is frame-consistent no matter how the camera got
+    // there.
+    if (!defined(referenceDistance)) {
+      referenceDistance = nearestDistance;
+    }
+  } else {
+    const ray = uniformLevelScratchRay;
+    Cartesian3.clone(camera.positionWC, ray.origin);
+    Cartesian3.clone(camera.directionWC, ray.direction);
+    const intersection = IntersectionTests.rayEllipsoid(
+      ray,
+      primitive._tileProvider.tilingScheme.ellipsoid,
+    );
+    referenceDistance = defined(intersection) ? intersection.start : undefined;
+  }
+  // Horizon-looking views miss the ground entirely; fall back to the nearest
+  // tracked distance there too so the mode stays engaged.
+  if (!defined(referenceDistance)) {
+    referenceDistance = nearestDistance;
+  }
+  // Sanity clamp: keep the reference within an order of magnitude of the
+  // nearest visible tile distance, so a degenerate camera frame cannot
+  // demand levels far outside what visible tiles can plausibly load.
+  if (
+    defined(referenceDistance) &&
+    defined(nearestDistance) &&
+    nearestDistance > 0.0
+  ) {
+    referenceDistance = Math.min(referenceDistance, 8.0 * nearestDistance);
+  }
+  if (!defined(referenceDistance) || referenceDistance <= 0.0) {
+    // No ground along the view ray (or no tracking yet): leave inactive.
+    return;
+  }
+
+  // Smooth the reference distance to avoid level flapping, but snap across
+  // large discontinuities (camera cuts, e.g. per-frame seeks in export).
+  const previous = state.referenceDistance;
+  if (defined(previous) && previous > 0.0) {
+    const ratio = referenceDistance / previous;
+    referenceDistance =
+      ratio < 0.5 || ratio > 2.0
+        ? referenceDistance
+        : previous + 0.25 * (referenceDistance - previous);
+  }
+
+  const maxDeviationLevels = CesiumMath.clamp(
+    mode.maxDeviationLevels ?? 3,
+    0,
+    10,
+  );
+
+  state.referenceDistance = referenceDistance;
+  state.engage = engage;
+  state.deviationFactor = Math.pow(2.0, maxDeviationLevels);
+  state.active = true;
+}
+
 function screenSpaceError(primitive, frameState, tile) {
   if (
     frameState.mode === SceneMode.SCENE2D ||
@@ -1263,9 +1467,40 @@ function screenSpaceError(primitive, frameState, tile) {
 
   let error = (maxGeometricError * height) / (distance * sseDenominator);
 
+  const uniformLevel = primitive._uniformLevelState;
+  if (uniformLevel.active) {
+    // Uniform-level mode: evaluate this tile as if it sat at the reference
+    // distance, so every tile refines to the level appropriate for one
+    // representative distance instead of its own. The min() caps how far
+    // beyond that far tiles may be pushed (each allowed deviation level is a
+    // factor of two), bounding the tile-count growth toward the horizon.
+    // engage blends between natural and uniform selection.
+    const uniformError =
+      (maxGeometricError * height) /
+      (uniformLevel.referenceDistance * sseDenominator);
+    const cappedUniformError = Math.min(
+      uniformError,
+      error * uniformLevel.deviationFactor,
+    );
+    error += (cappedUniformError - error) * uniformLevel.engage;
+  }
+
   if (frameState.fog.enabled) {
-    error -=
-      CesiumMath.fog(distance, frameState.fog.density) * frameState.fog.sse;
+    let fogAmount = CesiumMath.fog(distance, frameState.fog.density);
+    if (uniformLevel.active) {
+      // Blend the fog SSE relief toward the relief at the reference distance
+      // so every tile gets the same effective threshold. Subtracting each
+      // tile's own (larger, distance-dependent) relief instead would satisfy
+      // the SSE for far tiles on fog alone, vetoing the uniform refinement
+      // and reintroducing cross-level boundaries beyond the fog onset
+      // distance. Fog shading itself is unaffected; only LOD selection.
+      const uniformFogAmount = CesiumMath.fog(
+        uniformLevel.referenceDistance,
+        frameState.fog.density,
+      );
+      fogAmount += (uniformFogAmount - fogAmount) * uniformLevel.engage;
+    }
+    error -= fogAmount * frameState.fog.sse;
   }
 
   error /= frameState.pixelRatio;
