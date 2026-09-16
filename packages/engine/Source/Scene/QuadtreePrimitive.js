@@ -125,14 +125,16 @@ function QuadtreePrimitive(options) {
 
   // Per-frame uniform-level state, recomputed in beginFrame and consumed by
   // screenSpaceError. version marks the uniformLevelMode implementation
-  // revision (1: initial, 2: nearest-fallback + clamp for Columbus); it lets
-  // callers detect which engine build they are actually running against.
+  // revision (1: initial, 2: nearest-fallback + clamp for Columbus,
+  // 3: maxCoarsenLevels near-side clamp); it lets callers detect which
+  // engine build they are actually running against.
   this._uniformLevelState = {
-    version: 2,
+    version: 3,
     active: false,
     engage: 0.0,
     referenceDistance: undefined,
     deviationFactor: 8.0,
+    coarsenFactor: 2.0,
   };
   this._nearestTileDistanceThisFrame = undefined;
   this._nearestTileDistanceLastFrame = undefined;
@@ -1306,6 +1308,15 @@ const uniformLevelScratchRay = new Ray();
  *   maxDeviationLevels (default 3) caps how many levels above the natural LOD
  *              far tiles may be forced to refine, bounding the tile-count
  *              increase toward the horizon.
+ *   maxCoarsenLevels (default 1, clamped to [0, 10]) caps how many levels
+ *              below the natural LOD near (foreground) tiles may be held
+ *              back. Uncapped, the foreground of a tilted far view lands
+ *              2+ levels coarser than natural, and verticalExaggeration > 1
+ *              multiplies the interpolation error of coarse terrain
+ *              (1 level = 4x, 2 levels = 16x) into visible tearing. 1
+ *              measures +0~4% tile requests; 0 makes the foreground fully
+ *              natural (+5~69% requests) but mixes near/far levels again,
+ *              bringing back the dataset's cross-level color bands.
  *   pitchRangeDegrees (default undefined = always engaged) is a [full, none]
  *              pair of pitch angles; the effect fades out between them as the
  *              view approaches the horizon. Pass null or leave undefined to
@@ -1442,10 +1453,12 @@ function updateUniformLevelState(primitive, frameState) {
     0,
     10,
   );
+  const maxCoarsenLevels = CesiumMath.clamp(mode.maxCoarsenLevels ?? 1, 0, 10);
 
   state.referenceDistance = referenceDistance;
   state.engage = engage;
   state.deviationFactor = Math.pow(2.0, maxDeviationLevels);
+  state.coarsenFactor = Math.pow(2.0, maxCoarsenLevels);
   state.active = true;
 }
 
@@ -1471,15 +1484,21 @@ function screenSpaceError(primitive, frameState, tile) {
   if (uniformLevel.active) {
     // Uniform-level mode: evaluate this tile as if it sat at the reference
     // distance, so every tile refines to the level appropriate for one
-    // representative distance instead of its own. The min() caps how far
-    // beyond that far tiles may be pushed (each allowed deviation level is a
-    // factor of two), bounding the tile-count growth toward the horizon.
-    // engage blends between natural and uniform selection.
+    // representative distance instead of its own. The clamp bounds how far
+    // the selection may drift from natural in either direction (each level
+    // is a factor of two in error): far tiles may be pushed at most
+    // maxDeviationLevels levels finer (bounding tile-count growth toward the
+    // horizon), and near tiles held at most maxCoarsenLevels levels coarser.
+    // Without the near-side clamp, the foreground of a tilted far view lands
+    // 2+ levels coarse, and terrain exaggeration (verticalExaggeration > 1)
+    // amplifies coarse-terrain interpolation error (4x per level) into
+    // visible tearing. engage blends between natural and uniform selection.
     const uniformError =
       (maxGeometricError * height) /
       (uniformLevel.referenceDistance * sseDenominator);
-    const cappedUniformError = Math.min(
+    const cappedUniformError = CesiumMath.clamp(
       uniformError,
+      error / uniformLevel.coarsenFactor,
       error * uniformLevel.deviationFactor,
     );
     error += (cappedUniformError - error) * uniformLevel.engage;

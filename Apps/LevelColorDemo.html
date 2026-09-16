@@ -181,6 +181,19 @@
         偏移上限 K：<span id="uniformDevVal">3</span>
       </label>
       <input type="range" id="uniformDev" min="0" max="8" step="1" value="3" />
+      <label
+        >前景粗化上限 maxCoarsenLevels：<span id="uniformCoarsenVal"
+          >1</span
+        ></label
+      >
+      <input
+        type="range"
+        id="uniformCoarsen"
+        min="0"
+        max="4"
+        step="1"
+        value="1"
+      />
 
       <label
         >导入自定义 profile：<input type="file" id="file" accept=".json"
@@ -464,11 +477,18 @@
 
         // 统一层级：开启后视野内瓦片按同一参考距离选层，跨层接缝从源头消失
         // （代价是倾斜视角下瓦片量增大，故同步调大 tileCacheSize 防 LRU 抖动）。
+        // maxCoarsenLevels 限制前景比自然选层最多粗几级：不设上限时倾斜大
+        // 远景的前景会粗 2+ 级，地形夸大（verticalExaggeration > 1）把粗面
+        // 片插值误差（粗 1 级 = 4x、2 级 = 16x）放大成可见撕裂；1 = 最多粗
+        // 1 级（瓦片请求 +0~4%），0 = 前景完全自然（+5~69% 请求，且近远
+        // 混级会带回数据集断档色带）。
         // 需重新构建引擎（CesiumUnminified）后生效；旧构建下赋值无副作用。
         const uniformEl = $("uniform");
         const uniformRefEl = $("uniformRef");
         const uniformDevEl = $("uniformDev");
         const uniformDevValEl = $("uniformDevVal");
+        const uniformCoarsenEl = $("uniformCoarsen");
+        const uniformCoarsenValEl = $("uniformCoarsenVal");
         function applyUniformLevelMode() {
           const globe = viewer.scene.globe;
           if (uniformEl.checked) {
@@ -477,6 +497,7 @@
               enabled: true,
               reference: uniformRefEl.value,
               maxDeviationLevels: parseInt(uniformDevEl.value, 10),
+              maxCoarsenLevels: parseInt(uniformCoarsenEl.value, 10),
               pitchRangeDegrees: [-50, -25],
             };
           } else {
@@ -488,6 +509,12 @@
         uniformRefEl.addEventListener("change", applyUniformLevelMode);
         uniformDevEl.addEventListener("input", () => {
           uniformDevValEl.textContent = uniformDevEl.value;
+          if (uniformEl.checked) {
+            applyUniformLevelMode();
+          }
+        });
+        uniformCoarsenEl.addEventListener("input", () => {
+          uniformCoarsenValEl.textContent = uniformCoarsenEl.value;
           if (uniformEl.checked) {
             applyUniformLevelMode();
           }

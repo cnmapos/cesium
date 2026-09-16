@@ -117,6 +117,15 @@ function Globe(ellipsoid) {
    *       LOD far tiles may be forced to refine (default <code>3</code>). Each
    *       allowed level roughly quadruples the extra tile count toward the
    *       horizon; lower values are cheaper, higher values are more uniform.</li>
+   *   <li><code>maxCoarsenLevels</code>: caps how many levels below the natural
+   *       LOD near (foreground) tiles may be held back (default <code>1</code>).
+   *       Uncapped, the foreground of a tilted far view lands 2+ levels coarser
+   *       than natural, and <code>verticalExaggeration &gt; 1</code> multiplies
+   *       the interpolation error of coarse terrain (1 level = 4x, 2 levels =
+   *       16x) into visible tearing. <code>1</code> measures +0~4% tile
+   *       requests over uncapped; <code>0</code> makes the foreground fully
+   *       natural (+5~69% requests) but mixes near/far levels again, bringing
+   *       back the dataset's cross-level color bands.</li>
    *   <li><code>pitchRangeDegrees</code>: a <code>[full, none]</code> pair of pitch
    *       angles in degrees (e.g. <code>[-50, -25]</code>) between which the effect
    *       fades out as the view approaches the horizon. Leave undefined or pass
@@ -136,6 +145,7 @@ function Globe(ellipsoid) {
    *   enabled: true,
    *   reference: "center",
    *   maxDeviationLevels: 4,
+   *   maxCoarsenLevels: 1,
    *   pitchRangeDegrees: null,
    * };
    */
