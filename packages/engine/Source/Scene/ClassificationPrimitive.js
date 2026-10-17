@@ -12,6 +12,8 @@ import ShaderProgram from "../Renderer/ShaderProgram.js";
 import ShaderSource from "../Renderer/ShaderSource.js";
 import ShadowVolumeAppearanceVS from "../Shaders/ShadowVolumeAppearanceVS.js";
 import ShadowVolumeFS from "../Shaders/ShadowVolumeFS.js";
+import BlendEquation from "./BlendEquation.js";
+import BlendFunction from "./BlendFunction.js";
 import BlendingState from "./BlendingState.js";
 import ClassificationType from "./ClassificationType.js";
 import DepthFunction from "./DepthFunction.js";
@@ -366,7 +368,61 @@ function getStencilDepthRenderState(enableStencil, mask3DTiles) {
   };
 }
 
-function getColorRenderState(enableStencil) {
+/**
+ * HZ patch: per-material blend modes for ground classification.
+ * The app encodes the mode as a suffix on the composed material type
+ * (e.g. ComposedPolygon_..._blendScreen). Source fragments are
+ * premultiplied (ShadowVolumeAppearanceFS: rgb *= alpha), so:
+ *   screen   = src + dst * (1 - src)                  -> (ONE, ONE_MINUS_SRC_COLOR)
+ *   multiply = dst * mix(1, c, a)  (alpha-gated)      -> (DST_COLOR, ONE_MINUS_SRC_ALPHA)
+ *   additive = src + dst                             -> (ONE, ONE)
+ * Alpha keeps standard premultiplied over except additive.
+ */
+const classificationBlendOverrides = {
+  _blendScreen: {
+    enabled: true,
+    equationRgb: BlendEquation.ADD,
+    equationAlpha: BlendEquation.ADD,
+    functionSourceRgb: BlendFunction.ONE,
+    functionSourceAlpha: BlendFunction.ONE,
+    functionDestinationRgb: BlendFunction.ONE_MINUS_SOURCE_COLOR,
+    functionDestinationAlpha: BlendFunction.ONE_MINUS_SOURCE_ALPHA,
+  },
+  _blendMultiply: {
+    enabled: true,
+    equationRgb: BlendEquation.ADD,
+    equationAlpha: BlendEquation.ADD,
+    functionSourceRgb: BlendFunction.DESTINATION_COLOR,
+    functionSourceAlpha: BlendFunction.ONE,
+    functionDestinationRgb: BlendFunction.ONE_MINUS_SOURCE_ALPHA,
+    functionDestinationAlpha: BlendFunction.ONE_MINUS_SOURCE_ALPHA,
+  },
+  _blendAdditive: {
+    enabled: true,
+    equationRgb: BlendEquation.ADD,
+    equationAlpha: BlendEquation.ADD,
+    functionSourceRgb: BlendFunction.ONE,
+    functionSourceAlpha: BlendFunction.ONE,
+    functionDestinationRgb: BlendFunction.ONE,
+    functionDestinationAlpha: BlendFunction.ONE,
+  },
+};
+
+/** HZ patch: material type suffix -> blending override (undefined = stock) */
+function getClassificationBlendOverride(classificationPrimitive) {
+  const type = classificationPrimitive.appearance?.material?.type;
+  if (typeof type !== "string") {
+    return undefined;
+  }
+  for (const suffix of Object.keys(classificationBlendOverrides)) {
+    if (type.endsWith(suffix)) {
+      return classificationBlendOverrides[suffix];
+    }
+  }
+  return undefined;
+}
+
+function getColorRenderState(enableStencil, blending) {
   return {
     stencilTest: {
       enabled: enableStencil,
@@ -390,7 +446,7 @@ function getColorRenderState(enableStencil) {
       enabled: false,
     },
     depthMask: false,
-    blending: BlendingState.PRE_MULTIPLIED_ALPHA_BLEND,
+    blending: blending ?? BlendingState.PRE_MULTIPLIED_ALPHA_BLEND,
   };
 }
 
@@ -436,8 +492,12 @@ function createRenderStates(
   classificationPrimitive._rsStencilDepthPass3DTiles = RenderState.fromCache(
     getStencilDepthRenderState(stencilEnabled, true),
   );
+  // HZ patch: honor per-material blend mode encoded in the material type
   classificationPrimitive._rsColorPass = RenderState.fromCache(
-    getColorRenderState(stencilEnabled, false),
+    getColorRenderState(
+      stencilEnabled,
+      getClassificationBlendOverride(classificationPrimitive),
+    ),
   );
   classificationPrimitive._rsPickPass = RenderState.fromCache(pickRenderState);
 }

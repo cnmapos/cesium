@@ -25,13 +25,8 @@ void main()
     float batchTableIndex = texCoordExpandAndBatchIndex.w;
 
     vec2 widthAndShow = batchTable_getWidthAndShow(batchTableIndex);
-    float width = widthAndShow.x + 0.5;
+    float width = widthAndShow.x;
     float show = widthAndShow.y;
-
-    if (width < 1.0)
-    {
-        show = 0.0;
-    }
 
     vec4 pickColor = batchTable_getPickColor(batchTableIndex);
 
@@ -62,6 +57,21 @@ void main()
                 czm_translateRelativeToEye(nextPosition2DHigh.zxy, nextPosition2DLow.zxy),
                 czm_translateRelativeToEye(nextPosition3DHigh.xyz, nextPosition3DLow.xyz),
                 czm_morphTime);
+    }
+
+    // HZ patch: negative batch width encodes metric sizing (world meters).
+    // Convert to pixels per frame on the GPU so metric width tracks zoom
+    // without CPU property updates or geometry rebuilds.
+    if (width < 0.0)
+    {
+        vec4 posEC = czm_modelViewRelativeToEye * p;
+        width = clamp((-width) / czm_metersPerPixel(posEC), 1.0, 4096.0);
+    }
+    width += 0.5;
+
+    if (width < 1.0)
+    {
+        show = 0.0;
     }
 
     #ifdef DISTANCE_DISPLAY_CONDITION

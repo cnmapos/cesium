@@ -846,7 +846,7 @@ function createVertexArrays(collection, context, projection) {
 
   //stores all of the individual indices arrays.
   const totalIndices = [[]];
-  let indices = totalIndices[0];
+  let indices;
 
   const batchTable = collection._batchTable;
   const useHighlightColor = collection._useHighlightColor;
@@ -1364,7 +1364,9 @@ PolylineBucket.prototype.write = function (
   for (let i = 0; i < length; ++i) {
     const polyline = polylines[i];
     const width = polyline.width;
-    const show = polyline.show && width > 0.0;
+    // HZ patch: negative width encodes metric sizing (converted to pixels in
+    // the vertex shader), so only an exactly-zero width hides the polyline.
+    const show = polyline.show && width !== 0.0;
     const polylineBatchIndex = polyline._index;
     const segments = this.getSegments(polyline, projection);
     const positions = segments.positions;
