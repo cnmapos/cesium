@@ -12,6 +12,7 @@ import IndexDatatype from "../Core/IndexDatatype.js";
 import Matrix4 from "../Core/Matrix4.js";
 import OffsetGeometryInstanceAttribute from "../Core/OffsetGeometryInstanceAttribute.js";
 import WebMercatorProjection from "../Core/WebMercatorProjection.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 
 function transformToWorldCoordinates(
   instances,
@@ -84,11 +85,120 @@ function addBatchIds(instances) {
   }
 }
 
+/**
+ * Keeps a polyline's projected 2D attributes on one contiguous world copy in
+ * Columbus repeat-worlds mode. PolylineGeometry subdivides along the arc and
+ * projects every vertex independently, so a line crossing the ±180° meridian
+ * ends up with consecutive vertices on opposite sides of the primary world,
+ * connected by an edge drawn across the whole map. Consecutive vertices whose
+ * projected u jumps by roughly a full world width are seam crossings: lift
+ * them onto the adjacent copy (the same rule PolylineCollection.getSegments
+ * applies). The per-vertex lift is computed from `position2D` and applied
+ * identically to `prevPosition2D` and `nextPosition2D` so each vertex's
+ * extrusion references stay on the copy the vertex itself was lifted to.
+ *
+ * Other primitive types (no prev/next position attributes) keep the stock
+ * per-side projection; their own IDL splitting still applies.
+ *
+ * @private
+ */
+function liftPolyline2DToWorldCopy(geometry, projection) {
+  const attributes = geometry.attributes;
+  const position2D = attributes.position2D;
+  const prevPosition2D = attributes.prevPosition2D;
+  const nextPosition2D = attributes.nextPosition2D;
+  if (
+    !defined(position2D) ||
+    !defined(prevPosition2D) ||
+    !defined(nextPosition2D)
+  ) {
+    return;
+  }
+
+  const worldWidth = ColumbusWorlds.getWorldWidth(projection);
+  const halfWorldWidth = worldWidth * 0.5;
+  const positions = position2D.values;
+  const vertexCount = positions.length / 3;
+  const lifts = new Float64Array(vertexCount);
+
+  let lift = 0.0;
+  let lifted = false;
+  for (let i = 1; i < vertexCount; ++i) {
+    const du = positions[i * 3] - (positions[(i - 1) * 3] + lift);
+    if (du > halfWorldWidth) {
+      lift -= worldWidth;
+      lifted = true;
+    } else if (du < -halfWorldWidth) {
+      lift += worldWidth;
+      lifted = true;
+    }
+    lifts[i] = lift;
+  }
+  if (!lifted) {
+    return;
+  }
+
+  const prevPositions = prevPosition2D.values;
+  const nextPositions = nextPosition2D.values;
+  for (let i = 0; i < vertexCount; ++i) {
+    const vertexLift = lifts[i];
+    if (vertexLift !== 0.0) {
+      positions[i * 3] += vertexLift;
+      prevPositions[i * 3] += vertexLift;
+      nextPositions[i * 3] += vertexLift;
+    }
+  }
+}
+
+/**
+ * Replays the world-copy shift that {@link GroundPolylineGeometry} baked into
+ * its 2D shadow-volume attributes onto the projected volume positions. The
+ * volume positions are projected here, after the geometry was built, so a
+ * ground polyline crossing the antimeridian would otherwise keep one half on
+ * the neighbouring world copy while its plane tests sit on the other, and the
+ * shifted half is discarded by the fragment shader.
+ *
+ * @private
+ */
+function liftGroundPolyline2DToWorldCopy(geometry, projection) {
+  const attributes = geometry.attributes;
+  const startHiLo2D = attributes.startHiLo2D;
+  const position2D = attributes.position2D;
+  if (!defined(startHiLo2D) || !defined(position2D)) {
+    return;
+  }
+
+  const worldWidth = ColumbusWorlds.getWorldWidth(projection);
+  const halfWorldWidth = worldWidth * 0.5;
+  if (!(halfWorldWidth > 0.0)) {
+    return;
+  }
+
+  const starts = startHiLo2D.values;
+  const positions = position2D.values;
+  const count = Math.min(starts.length / 4, positions.length / 3);
+  for (let i = 0; i < count; ++i) {
+    // startHiLo2D holds the segment start in the unwrapped projection space
+    // (GroundPolylineGeometry nudges and lifts the 2D attributes so a line
+    // crossing the antimeridian stays on one copy), while the volume position
+    // is projected from the ECEF position and therefore wraps. Snap the
+    // position onto the world copy of its own segment: the two can only
+    // differ by whole worlds.
+    const startU = starts[i * 4] + starts[i * 4 + 2];
+    const u = positions[i * 3];
+    const delta = startU - u;
+    if (delta > halfWorldWidth || delta < -halfWorldWidth) {
+      positions[i * 3] = u + Math.round(delta / worldWidth) * worldWidth;
+    }
+  }
+}
+
 function geometryPipeline(parameters) {
   const instances = parameters.instances;
   const projection = parameters.projection;
   const uintIndexSupport = parameters.elementIndexUintSupported;
   const scene3DOnly = parameters.scene3DOnly;
+  const columbusRepeatWorlds = parameters.columbusRepeatWorlds === true;
   const vertexCacheOptimize = parameters.vertexCacheOptimize;
   const compressVertices = parameters.compressVertices;
   const modelMatrix = parameters.modelMatrix;
@@ -170,41 +280,59 @@ function geometryPipeline(parameters) {
     // Split positions for GPU RTE
     const attributes = geometry.attributes;
     if (!scene3DOnly) {
+      // Collect DOUBLE attribute names up front: projectTo2D renames the
+      // attributes it touches, so projecting while iterating them risks
+      // reprocessing the freshly added *3D attributes.
+      const doubleAttributeNames = [];
       for (const name in attributes) {
         if (
           attributes.hasOwnProperty(name) &&
           attributes[name].componentDatatype === ComponentDatatype.DOUBLE
         ) {
-          const name3D = `${name}3D`;
-          const name2D = `${name}2D`;
-
-          // Compute 2D positions
-          GeometryPipeline.projectTo2D(
-            geometry,
-            name,
-            name3D,
-            name2D,
-            projection,
-          );
-          if (defined(geometry.boundingSphere) && name === "position") {
-            geometry.boundingSphereCV = BoundingSphere.fromVertices(
-              geometry.attributes.position2D.values,
-            );
-          }
-
-          GeometryPipeline.encodeAttribute(
-            geometry,
-            name3D,
-            `${name3D}High`,
-            `${name3D}Low`,
-          );
-          GeometryPipeline.encodeAttribute(
-            geometry,
-            name2D,
-            `${name2D}High`,
-            `${name2D}Low`,
-          );
+          doubleAttributeNames.push(name);
         }
+      }
+
+      for (let a = 0; a < doubleAttributeNames.length; ++a) {
+        const name = doubleAttributeNames[a];
+        GeometryPipeline.projectTo2D(
+          geometry,
+          name,
+          `${name}3D`,
+          `${name}2D`,
+          projection,
+        );
+      }
+
+      if (columbusRepeatWorlds) {
+        liftPolyline2DToWorldCopy(geometry, projection);
+        liftGroundPolyline2DToWorldCopy(geometry, projection);
+      }
+
+      // Compute the Columbus-view bounding sphere before encodeAttribute
+      // renames position2D into position2DHigh/Low.
+      if (defined(geometry.boundingSphere) && defined(attributes.position2D)) {
+        geometry.boundingSphereCV = BoundingSphere.fromVertices(
+          attributes.position2D.values,
+        );
+      }
+
+      for (let a = 0; a < doubleAttributeNames.length; ++a) {
+        const name3D = `${doubleAttributeNames[a]}3D`;
+        const name2D = `${doubleAttributeNames[a]}2D`;
+
+        GeometryPipeline.encodeAttribute(
+          geometry,
+          name3D,
+          `${name3D}High`,
+          `${name3D}Low`,
+        );
+        GeometryPipeline.encodeAttribute(
+          geometry,
+          name2D,
+          `${name2D}High`,
+          `${name2D}Low`,
+        );
       }
     } else {
       for (const name in attributes) {
@@ -715,6 +843,7 @@ PrimitivePipeline.packCombineGeometryParameters = function (
     isGeographic: parameters.projection instanceof GeographicProjection,
     elementIndexUintSupported: parameters.elementIndexUintSupported,
     scene3DOnly: parameters.scene3DOnly,
+    columbusRepeatWorlds: parameters.columbusRepeatWorlds === true,
     vertexCacheOptimize: parameters.vertexCacheOptimize,
     compressVertices: parameters.compressVertices,
     modelMatrix: parameters.modelMatrix,
@@ -761,6 +890,7 @@ PrimitivePipeline.unpackCombineGeometryParameters = function (
     projection: projection,
     elementIndexUintSupported: packedParameters.elementIndexUintSupported,
     scene3DOnly: packedParameters.scene3DOnly,
+    columbusRepeatWorlds: packedParameters.columbusRepeatWorlds === true,
     vertexCacheOptimize: packedParameters.vertexCacheOptimize,
     compressVertices: packedParameters.compressVertices,
     modelMatrix: Matrix4.clone(packedParameters.modelMatrix),

@@ -32,6 +32,7 @@ import PolylineFS from "../Shaders/PolylineFS.js";
 import PolylineVS from "../Shaders/PolylineVS.js";
 import BatchTable from "./BatchTable.js";
 import BlendingState from "./BlendingState.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import Material from "./Material.js";
 import Polyline from "./Polyline.js";
 import SceneMode from "./SceneMode.js";
@@ -167,6 +168,11 @@ function PolylineCollection(options) {
   };
 
   this._mode = undefined;
+
+  // Whether Columbus repeat worlds are enabled; when true, polylines are
+  // kept continuous through the ±180° meridian instead of being split at the
+  // IDL. Set each update() from the frame state.
+  this._columbusRepeatWorlds = false;
 
   this._polylinesToUpdate = [];
   this._vertexArrays = [];
@@ -422,6 +428,16 @@ PolylineCollection.prototype.update = function (frameState) {
   }
 
   updateMode(this, frameState);
+
+  const columbusRepeatWorlds =
+    frameState.columbusRepeatWorlds === true &&
+    frameState.mode === SceneMode.COLUMBUS_VIEW;
+  if (this._columbusRepeatWorlds !== columbusRepeatWorlds) {
+    // Toggling repeat worlds changes whether polylines are split at the IDL,
+    // which changes vertex buffer sizes; rebuild the vertex arrays.
+    this._columbusRepeatWorlds = columbusRepeatWorlds;
+    this._createVertexArray = true;
+  }
 
   const context = frameState.context;
   const projection = frameState.mapProjection;
@@ -1782,6 +1798,27 @@ PolylineBucket.prototype.getSegments = function (polyline, projection) {
         ellipsoid.cartesianToCartographic(p, scratchCartographic),
       ),
     );
+  }
+
+  if (
+    newPositions.length > 0 &&
+    this.mode === SceneMode.COLUMBUS_VIEW &&
+    polyline._polylineCollection._columbusRepeatWorlds === true
+  ) {
+    // Columbus repeat worlds: the IDL split is disabled in this mode, so lift
+    // consecutive projected u values onto the same world copy. The line stays
+    // in the primary world; the scene renders the visible world copies by
+    // shifting the camera, so a line crossing the seam needs no per-copy
+    // placement of its own.
+    const worldWidth = ColumbusWorlds.getWorldWidth(projection);
+    for (let n = 1; n < newPositions.length; ++n) {
+      const du = newPositions[n].x - newPositions[n - 1].x;
+      if (du > worldWidth * 0.5) {
+        newPositions[n].x -= worldWidth;
+      } else if (du < -worldWidth * 0.5) {
+        newPositions[n].x += worldWidth;
+      }
+    }
   }
 
   if (newPositions.length > 0) {

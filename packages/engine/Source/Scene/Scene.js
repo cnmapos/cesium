@@ -45,6 +45,7 @@ import BrdfLutGenerator from "./BrdfLutGenerator.js";
 import Camera from "./Camera.js";
 import Cesium3DTilePass from "./Cesium3DTilePass.js";
 import Cesium3DTilePassState from "./Cesium3DTilePassState.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import CreditDisplay from "./CreditDisplay.js";
 import DebugCameraPrimitive from "./DebugCameraPrimitive.js";
 import DepthPlane from "./DepthPlane.js";
@@ -108,6 +109,9 @@ const requestRenderAfterFrame = function (scene) {
  * @param {boolean} [options.scene3DOnly=false] If true, optimizes memory use and performance for 3D mode but disables the ability to use 2D or Columbus View.
  * @param {boolean} [options.shadows=false] Determines if shadows are cast by light sources.
  * @param {MapMode2D} [options.mapMode2D=MapMode2D.INFINITE_SCROLL] Determines if the 2D map is rotatable or can be scrolled infinitely in the horizontal direction.
+ * @param {boolean} [options.columbusRepeatWorlds=false] If true, the Columbus View map repeats horizontally: translated
+ *        copies of the globe surface tiles are rendered beyond the ±180° meridian so the map, entity placement, and
+ *        picking continue seamlessly across the antimeridian.
  * @param {boolean} [options.requestRenderMode=false] If true, rendering a frame will only occur when needed as determined by changes within the scene. Enabling improves performance of the application, but requires using {@link Scene#requestRender} to render a new frame explicitly in this mode. This will be necessary in many cases after making changes to the scene in other parts of the API. See {@link https://cesium.com/blog/2018/01/24/cesium-scene-rendering-performance/|Improving Performance with Explicit Rendering}.
  * @param {number} [options.maximumRenderTimeChange=0.0] If requestRenderMode is true, this value defines the maximum change in simulation time allowed before a render is requested. See {@link https://cesium.com/blog/2018/01/24/cesium-scene-rendering-performance/|Improving Performance with Explicit Rendering}.
  * @param {number} [options.depthPlaneEllipsoidOffset=0.0] Adjust the DepthPlane to address rendering artefacts below ellipsoid zero elevation.
@@ -627,6 +631,7 @@ function Scene(options) {
   this._screenSpaceCameraController = new ScreenSpaceCameraController(this);
   this._cameraUnderground = false;
   this._mapMode2D = options.mapMode2D ?? MapMode2D.INFINITE_SCROLL;
+  this._columbusRepeatWorlds = options.columbusRepeatWorlds ?? false;
 
   // Keeps track of the state of a frame. FrameState is the state across
   // the primitives of the scene. This state is for internally keeping track
@@ -1525,6 +1530,26 @@ Object.defineProperties(Scene.prototype, {
   },
 
   /**
+   * Gets or sets whether the Columbus View map repeats horizontally. When true,
+   * translated copies of the globe surface tiles are rendered beyond the ±180°
+   * meridian, and entity placement/picking wrap to the copy nearest the camera,
+   * so editing and animation work seamlessly across the antimeridian.
+   * Only has an effect in {@link SceneMode.COLUMBUS_VIEW}.
+   * @memberof Scene.prototype
+   *
+   * @type {boolean}
+   * @default false
+   */
+  columbusRepeatWorlds: {
+    get: function () {
+      return this._columbusRepeatWorlds;
+    },
+    set: function (value) {
+      this._columbusRepeatWorlds = value;
+    },
+  },
+
+  /**
    * Gets or sets the position of the splitter within the viewport.  Valid values are between 0.0 and 1.0.
    * @memberof Scene.prototype
    *
@@ -1985,6 +2010,7 @@ Scene.prototype.updateFrameState = function () {
   frameState.mode = this._mode;
   frameState.morphTime = this.morphTime;
   frameState.mapProjection = this.mapProjection;
+  frameState.columbusRepeatWorlds = this._columbusRepeatWorlds;
   frameState.camera = camera;
   frameState.cullingVolume = camera.frustum.computeCullingVolume(
     camera.positionWC,
@@ -2618,6 +2644,355 @@ function performCesium3DTileEdgesPass(scene, passState, frustumCommands) {
   passState.framebuffer = originalFramebuffer;
 }
 
+const COLUMBUS_MAX_COPY_WORLDS = 2;
+const columbusWorldIndicesScratch = [];
+
+/**
+ * Finds the primary pass' frustum whose depth range best matches a copy's
+ * frustum. A copy's visible set is culled from the shifted camera, so its
+ * frustum split can differ from the primary pass' (the globe emits translated
+ * tile commands whose distances change under the shift). Pairing by index then
+ * matches a copy's terrain commands with a primary frustum that holds no
+ * terrain, and the classification shader samples that frustum's empty globe
+ * depth copy, discarding every fragment. Pair by depth range instead: a frustum
+ * whose midpoint falls inside a primary range maps to that range, and a frustum
+ * outside every range maps to the closest one.
+ *
+ * @param {FrustumCommands[]} primaryFrustumCommandsList The primary pass' bins.
+ * @param {FrustumCommands} frustumCommands The copy's bin.
+ * @returns {number} The index of the matching primary frustum, or -1 when the primary visible set is empty.
+ * @private
+ */
+function matchPrimaryFrustumIndex(primaryFrustumCommandsList, frustumCommands) {
+  const count = primaryFrustumCommandsList.length;
+  if (count === 0) {
+    return -1;
+  }
+
+  const midpoint = (frustumCommands.near + frustumCommands.far) * 0.5;
+  let bestIndex = count - 1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < count; ++i) {
+    const primary = primaryFrustumCommandsList[i];
+    let distance = 0.0;
+    if (midpoint < primary.near) {
+      distance = primary.near - midpoint;
+    } else if (midpoint > primary.far) {
+      distance = midpoint - primary.far;
+    }
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+const columbusCopyCullingVolume = new CullingVolume();
+const columbusSavedPositionWC = new Cartesian3();
+const columbusSavedViewMatrix = new Matrix4();
+const columbusSavedInvViewMatrix = new Matrix4();
+
+/**
+ * Renders the data passes again for each visible world copy when Columbus
+ * repeat worlds is enabled, so primitives authored in the primary world also
+ * appear on the copies around the camera. Each copy is the primary-world
+ * command list viewed by a camera shifted a whole world along map-u, which
+ * replicates every draw command type (and its pick derived command) without
+ * duplicating geometry, memory or per-element placement logic.
+ *
+ * Globe tiles are deliberately excluded: {@link GlobeSurfaceTileProvider}
+ * already emits its own translated tile commands, which the regular GLOBE
+ * pass renders once.
+ *
+ * @param {Scene} scene The scene.
+ * @param {PassState} passState The render pass state.
+ * @param {Frustum} frustum The working frustum used by executeCommands.
+ * @param {Function} performPass Executes a pass for a frustum's command bin.
+ * @param {boolean} classifyInline Whether the copies' ground classification was already executed by executeCommands.
+ * @private
+ */
+function executeColumbusWorldCopyCommands(
+  scene,
+  passState,
+  frustum,
+  performPass,
+  classifyInline,
+) {
+  const { camera, context, frameState } = scene;
+  const { uniformState } = context;
+
+  const worldWidth = ColumbusWorlds.getWorldWidth(frameState.mapProjection);
+  const worldIndices = ColumbusWorlds.getVisibleWorldIndices(
+    camera._positionWC.y,
+    worldWidth,
+    frameState.cullingVolume,
+    COLUMBUS_MAX_COPY_WORLDS,
+    columbusWorldIndicesScratch,
+  );
+  if (worldIndices.length === 0) {
+    return;
+  }
+
+  const view = scene._view;
+
+  // The globe depth texture is produced inside the primary pass' frustum loop.
+  // That loop is skipped when no command is visible from the camera's own copy
+  // (the camera can sit on a non-primary copy, with all data a world away), so
+  // billboards, labels and other shaders sampling czm_globeDepthTexture would
+  // get an undefined uniform while the copies draw. Produce the (cleared) globe
+  // depth once here - the copies share the primary pass' screen space, so the
+  // texture is as valid for them as it would be for a regular frame.
+  if (!defined(uniformState.globeDepthTexture) && defined(view.globeDepth)) {
+    view.globeDepth.executeCopyDepth(context, passState);
+  }
+
+  const baseFrustumCommandsList = view.frustumCommandsList;
+  let copyFrustumCommandsList = scene._columbusFrustumCommands;
+  if (!defined(copyFrustumCommandsList)) {
+    copyFrustumCommandsList = scene._columbusFrustumCommands = [];
+  }
+
+  const cullingVolume = frameState.cullingVolume;
+  const positionWC = Cartesian3.clone(
+    camera._positionWC,
+    columbusSavedPositionWC,
+  );
+  const viewMatrix = Matrix4.clone(camera._viewMatrix, columbusSavedViewMatrix);
+  const invViewMatrix = Matrix4.clone(
+    camera._invViewMatrix,
+    columbusSavedInvViewMatrix,
+  );
+
+  for (let c = 0; c < worldIndices.length; ++c) {
+    const worldOffset = worldIndices[c] * worldWidth;
+
+    // Shift the camera to the copy and cull the data against its frustum,
+    // building the bins in a list private to the copies so the primary
+    // world's bins (used by pickPosition) stay intact.
+    ColumbusWorlds.applyCameraWorldOffset(camera, worldOffset);
+    frameState.cullingVolume = ColumbusWorlds.translateCullingVolume(
+      cullingVolume,
+      worldOffset,
+      columbusCopyCullingVolume,
+    );
+
+    view.frustumCommandsList = copyFrustumCommandsList;
+    view.createPotentiallyVisibleSet(scene);
+    view.frustumCommandsList = baseFrustumCommandsList;
+
+    uniformState.update(frameState);
+
+    const numFrustums = copyFrustumCommandsList.length;
+    for (let i = 0; i < numFrustums; ++i) {
+      const index = numFrustums - i - 1;
+      const frustumCommands = copyFrustumCommandsList[index];
+
+      // Draw with the primary pass' frustum ranges. Shifting the camera does
+      // not change any distance, so a copy's commands must be depth-encoded
+      // exactly like the primary pass - the depth buffer was written with
+      // these ranges, and log depth (or any frustum-dependent depth math) only
+      // decodes correctly against them. The copy's bins are not guaranteed to
+      // split at the same distances as the primary's, so match by range rather
+      // than by position in the list.
+      //
+      // The primary visible set is empty when nothing of the camera's own world
+      // is on screen (the camera can sit on a world copy with all data a world
+      // away). There is then no primary depth to match, so the copy falls back
+      // to its own ranges instead of indexing past the empty list.
+      const primaryIndex = matchPrimaryFrustumIndex(
+        baseFrustumCommandsList,
+        frustumCommands,
+      );
+      const primaryFrustum =
+        primaryIndex >= 0
+          ? baseFrustumCommandsList[primaryIndex]
+          : frustumCommands;
+      frustum.near =
+        primaryIndex !== 0
+          ? primaryFrustum.near * scene.opaqueFrustumNearOffset
+          : primaryFrustum.near;
+      frustum.far = primaryFrustum.far;
+      uniformState.updateFrustum(frustum);
+
+      if (context.stencilBuffer) {
+        scene._stencilClearCommand.execute(context, passState);
+      }
+
+      // Classic ground classification samples czm_globeDepthTexture. Bind the
+      // copy that the primary pass produced for the matching frustum: each copy
+      // is packed against its own frustum's near/far, so sampling another
+      // frustum's copy decodes garbage - the near frustum contains no terrain
+      // and packs to zero, which the ground polyline shader treats as sky, so
+      // every clamped line in the copy would be discarded.
+      const globeDepth = view.globeDepth;
+      const copyFrustumIndex = primaryIndex >= 0 ? primaryIndex : index;
+
+      // This bin's classification was already executed by the primary loop
+      // (executeColumbusWorldCopyClassification) against the live terrain
+      // depth. Replaying it here would only re-do the stencil work against a
+      // restored copy of that depth, so it is skipped - except when the primary
+      // loop could not cover it: pick passes, or a bin matching no primary
+      // frustum (the primary visible set can be empty).
+      const classifiedInline = classifyInline && primaryIndex >= 0;
+
+      let restoredDepth = false;
+      if (defined(globeDepth)) {
+        globeDepth.useCopyDepth(context, copyFrustumIndex);
+
+        // Ground classification is resolved against the terrain depth in the
+        // depth buffer (its stencil pass depth tests the shadow volume against
+        // it), not against czm_globeDepthTexture. The primary loop clears the
+        // globe depth right after its classification pass when the globe does
+        // not depth test against terrain - the default. Put the matching
+        // frustum's globe depth back before re-running the classification
+        // commands, otherwise every copy's ground element is classified
+        // against an empty buffer and silently dropped.
+        restoredDepth =
+          !classifiedInline &&
+          frameState.passes.render &&
+          scene._environmentState.clearGlobeDepth &&
+          frustumCommands.indices[Pass.TERRAIN_CLASSIFICATION] > 0;
+        if (restoredDepth) {
+          globeDepth.executeRestoreDepth(context, passState, copyFrustumIndex);
+        }
+      }
+
+      if (!classifiedInline) {
+        performPass(frustumCommands, Pass.TERRAIN_CLASSIFICATION);
+      }
+
+      // Mirror the primary pass, which clears the globe depth before its opaque
+      // commands so primitives drawn on the ground are not occluded by the
+      // terrain. The restore above is only for the classification.
+      if (restoredDepth) {
+        scene._depthClearCommand.execute(context, passState);
+      }
+
+      performPass(frustumCommands, Pass.OPAQUE);
+      performTranslucentPass(scene, passState, frustumCommands);
+    }
+
+    Cartesian3.clone(positionWC, camera._positionWC);
+    Matrix4.clone(viewMatrix, camera._viewMatrix);
+    Matrix4.clone(invViewMatrix, camera._invViewMatrix);
+  }
+
+  frameState.cullingVolume = cullingVolume;
+  uniformState.update(frameState);
+}
+
+/**
+ * Executes the world copies' terrain classification while the primary pass'
+ * terrain depth is still in the depth buffer.
+ *
+ * Ground classification is resolved by depth testing the shadow volume against
+ * the terrain depth (z-fail stencil counting), so it needs the live buffer.
+ * Replaying those commands later - after `clearGlobeDepth` wiped the buffer -
+ * only works off a restored copy of the globe depth, and a restored copy is not
+ * equivalent to the live buffer: it is a resolved, packed copy of it, so
+ * coplanar ground surfaces miss the comparison and drop out once the view is
+ * oblique (partial or speckled fills). Running the copies here, right after the
+ * primary classification and before the depth clear, hands them exactly the
+ * depth buffer the primary classification used.
+ *
+ * @param {Scene} scene The scene.
+ * @param {PassState} passState The render pass state.
+ * @param {Frustum} frustum The working frustum, already set to the primary frustum's depth ranges.
+ * @param {number} frustumIndex The primary frustum index currently being drawn.
+ * @param {Function} performPass Executes a pass for a frustum's command bin.
+ * @private
+ */
+function executeColumbusWorldCopyClassification(
+  scene,
+  passState,
+  frustum,
+  frustumIndex,
+  performPass,
+) {
+  const { camera, frameState } = scene;
+  const { uniformState } = scene.context;
+
+  const worldWidth = ColumbusWorlds.getWorldWidth(frameState.mapProjection);
+  const worldIndices = ColumbusWorlds.getVisibleWorldIndices(
+    camera._positionWC.y,
+    worldWidth,
+    frameState.cullingVolume,
+    COLUMBUS_MAX_COPY_WORLDS,
+    columbusWorldIndicesScratch,
+  );
+  if (worldIndices.length === 0) {
+    return;
+  }
+
+  const view = scene._view;
+  const baseFrustumCommandsList = view.frustumCommandsList;
+  let copyFrustumCommandsList = scene._columbusFrustumCommands;
+  if (!defined(copyFrustumCommandsList)) {
+    copyFrustumCommandsList = scene._columbusFrustumCommands = [];
+  }
+
+  const cullingVolume = frameState.cullingVolume;
+  const positionWC = Cartesian3.clone(
+    camera._positionWC,
+    columbusSavedPositionWC,
+  );
+  const viewMatrix = Matrix4.clone(camera._viewMatrix, columbusSavedViewMatrix);
+  const invViewMatrix = Matrix4.clone(
+    camera._invViewMatrix,
+    columbusSavedInvViewMatrix,
+  );
+
+  for (let c = 0; c < worldIndices.length; ++c) {
+    const worldOffset = worldIndices[c] * worldWidth;
+
+    ColumbusWorlds.applyCameraWorldOffset(camera, worldOffset);
+    frameState.cullingVolume = ColumbusWorlds.translateCullingVolume(
+      cullingVolume,
+      worldOffset,
+      columbusCopyCullingVolume,
+    );
+
+    view.frustumCommandsList = copyFrustumCommandsList;
+    view.createPotentiallyVisibleSet(scene);
+    view.frustumCommandsList = baseFrustumCommandsList;
+
+    // Draw with the primary frustum's ranges: the depth buffer was written
+    // with them, and the copies are only translations of the same distances.
+    uniformState.update(frameState);
+    uniformState.updateFrustum(frustum);
+
+    const numFrustums = copyFrustumCommandsList.length;
+    for (let i = 0; i < numFrustums; ++i) {
+      const copyFrustumCommands = copyFrustumCommandsList[numFrustums - i - 1];
+      // Every copy bin belongs to exactly one primary frustum, so it is
+      // classified once while that frustum is drawn.
+      if (
+        matchPrimaryFrustumIndex(
+          baseFrustumCommandsList,
+          copyFrustumCommands,
+        ) !== frustumIndex
+      ) {
+        continue;
+      }
+
+      if (scene.context.stencilBuffer) {
+        scene._stencilClearCommand.execute(scene.context, passState);
+      }
+
+      performPass(copyFrustumCommands, Pass.TERRAIN_CLASSIFICATION);
+    }
+
+    Cartesian3.clone(positionWC, camera._positionWC);
+    Matrix4.clone(viewMatrix, camera._viewMatrix);
+    Matrix4.clone(invViewMatrix, camera._invViewMatrix);
+  }
+
+  frameState.cullingVolume = cullingVolume;
+  uniformState.update(frameState);
+  uniformState.updateFrustum(frustum);
+}
+
 /**
  * Execute the draw commands for all the render passes.
  *
@@ -2654,6 +3029,19 @@ function executeCommands(scene, passState) {
     useInvertClassification,
     usePostProcessSelected,
   } = scene._environmentState;
+
+  // World copies classify per frustum, inside the loop below, so they see the
+  // live terrain depth of the frustum they belong to - for color and for pick
+  // passes alike, since the primary loop classifies in both. Requires the globe
+  // depth framebuffer: that is what the primary loop packs for the frustum and
+  // what ground classification shaders sample. Everything else (no globe depth,
+  // translucent depth pick) keeps classifying in the copy pass further down.
+  const classifyCopyInline =
+    !renderTranslucentDepthForPick &&
+    useGlobeDepthFramebuffer &&
+    frameState.columbusRepeatWorlds === true &&
+    scene.mode === SceneMode.COLUMBUS_VIEW &&
+    (passes.render || passes.pick || passes.pickVoxel);
 
   const {
     globeDepth,
@@ -2733,7 +3121,16 @@ function executeCommands(scene, passState) {
     }
 
     if (useGlobeDepthFramebuffer) {
-      globeDepth.executeCopyDepth(context, passState);
+      // Keep one globe depth copy per frustum when the Columbus world copies
+      // are drawn: they re-execute a primary frustum's classification, which
+      // decodes depth against that frustum's near/far, so they need the copy
+      // packed with those same ranges. Without the copies a single shared
+      // texture is enough (and avoids allocating a texture per frustum).
+      globeDepth.executeCopyDepth(
+        context,
+        passState,
+        frameState.columbusRepeatWorlds === true ? index : 0,
+      );
     }
 
     // Draw terrain classification
@@ -2750,6 +3147,19 @@ function executeCommands(scene, passState) {
       } else {
         performPass(frustumCommands, Pass.TERRAIN_CLASSIFICATION);
       }
+    }
+
+    // The world copies classify while this frustum's terrain depth is still
+    // live - the depth clear below destroys it, and a restored copy of it is
+    // not good enough for an oblique view.
+    if (classifyCopyInline) {
+      executeColumbusWorldCopyClassification(
+        scene,
+        passState,
+        frustum,
+        index,
+        performPass,
+      );
     }
 
     if (clearGlobeDepth) {
@@ -2865,7 +3275,7 @@ function executeCommands(scene, passState) {
       passState.framebuffer = scene._invertClassification._fbo.framebuffer;
 
       // Draw normally
-      commandCount = performPass(frustumCommands, Pass.CESIUM_3D_TILE);
+      performPass(frustumCommands, Pass.CESIUM_3D_TILE);
 
       if (useGlobeDepthFramebuffer) {
         scene._invertClassification.prepareTextures(context);
@@ -2977,6 +3387,20 @@ function executeCommands(scene, passState) {
     performIdPass(frustumCommands, Pass.TRANSLUCENT);
 
     passState.framebuffer = originalFramebuffer;
+  }
+
+  if (
+    frameState.columbusRepeatWorlds === true &&
+    frameState.mode === SceneMode.COLUMBUS_VIEW &&
+    (passes.render || passes.pick || passes.pickVoxel)
+  ) {
+    executeColumbusWorldCopyCommands(
+      scene,
+      passState,
+      frustum,
+      performPass,
+      classifyCopyInline,
+    );
   }
 }
 
@@ -3609,10 +4033,9 @@ Scene.prototype.updateEnvironment = function () {
   );
 
   const envMaps = this.specularEnvironmentMaps;
-  let specularEnvironmentCubeMap = this._specularEnvironmentCubeMap;
+  const specularEnvironmentCubeMap = this._specularEnvironmentCubeMap;
   if (defined(envMaps) && specularEnvironmentCubeMap?.url !== envMaps) {
-    specularEnvironmentCubeMap =
-      specularEnvironmentCubeMap && specularEnvironmentCubeMap.destroy();
+    specularEnvironmentCubeMap?.destroy();
     this._specularEnvironmentCubeMap = new SpecularEnvironmentCubeMap(envMaps);
   } else if (!defined(envMaps) && defined(specularEnvironmentCubeMap)) {
     specularEnvironmentCubeMap.destroy();

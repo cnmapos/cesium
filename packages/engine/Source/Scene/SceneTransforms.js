@@ -10,6 +10,7 @@ import Matrix4 from "../Core/Matrix4.js";
 import OrthographicFrustum from "../Core/OrthographicFrustum.js";
 import OrthographicOffCenterFrustum from "../Core/OrthographicOffCenterFrustum.js";
 import Transforms from "../Core/Transforms.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import SceneMode from "./SceneMode.js";
 
 /**
@@ -132,6 +133,22 @@ SceneTransforms.worldWithEyeOffsetToWindowCoordinates = function (
   viewport.height = canvas.clientHeight;
 
   const camera = scene.camera;
+
+  if (
+    frameState.mode === SceneMode.COLUMBUS_VIEW &&
+    frameState.columbusRepeatWorlds === true
+  ) {
+    // Columbus repeat worlds: rendering replicates the data onto every world
+    // copy, so screen-space consumers (HTML overlays, editor handles) must
+    // project onto the copy nearest the camera as well. Columbus world
+    // coordinates are (height, u, v), so the copy offset applies to y.
+    actualPosition.y = ColumbusWorlds.nearestWorldU(
+      camera.positionWC.y,
+      actualPosition.y,
+      scene.mapProjection,
+    );
+  }
+
   let cameraCentered = false;
 
   if (frameState.mode === SceneMode.SCENE2D) {

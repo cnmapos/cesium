@@ -816,6 +816,7 @@ GroundPolylinePrimitive.prototype.update = function (frameState) {
       GroundPolylineGeometry.setProjectionAndEllipsoid(
         geometryInstance.geometry,
         frameState.mapProjection,
+        frameState.columbusRepeatWorlds,
       );
       geometryInstance.geometry._verticalExaggeration =
         frameState.verticalExaggeration;

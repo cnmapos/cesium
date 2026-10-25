@@ -34,6 +34,20 @@ void main(void)
     float distanceFromStart = czm_planeDistance(v_startPlaneNormalEcAndHalfWidth.xyz, -dot(ecStart, v_startPlaneNormalEcAndHalfWidth.xyz), eyeCoordinate.xyz);
     float distanceFromEnd = czm_planeDistance(v_endPlaneNormalEcAndBatchId.xyz, -dot(v_endEcAndStartEcX.xyz, v_endPlaneNormalEcAndBatchId.xyz), eyeCoordinate.xyz);
 
+    // HZ patch: in Columbus View ground polylines are tessellated at a fixed
+    // ground distance (granularity, ~10 km), so pulling the camera back makes a
+    // segment shorter than a pixel while the eye point reconstructed from the
+    // globe depth stays only accurate to about a pixel. Both miter planes then
+    // land on the same fragment and reject it, and once the whole line is
+    // sub-pixel it disappears entirely (visible from ~16M m altitude, worst at
+    // the antimeridian seam). Widen the miter planes by a pixel in CV only;
+    // neighbouring segments already overlap there, so the joins do not change.
+    if (czm_sceneMode == czm_sceneModeColumbusView) {
+        float miterTolerance = czm_metersPerPixel(eyeCoordinate);
+        distanceFromStart += miterTolerance;
+        distanceFromEnd += miterTolerance;
+    }
+
     if (abs(widthwiseDistance) > halfMaxWidth || distanceFromStart < 0.0 || distanceFromEnd < 0.0) {
 #ifdef DEBUG_SHOW_VOLUME
         out_FragColor = vec4(1.0, 0.0, 0.0, 0.5);

@@ -127,6 +127,16 @@ function FrameState(context, creditDisplay, jobScheduler) {
   this.mapProjection = undefined;
 
   /**
+   * Whether the map repeats horizontally in Columbus View, rendering
+   * translated copies of the globe surface tiles so the surface continues
+   * seamlessly beyond the ±180° meridian.
+   *
+   * @type {boolean}
+   * @default false
+   */
+  this.columbusRepeatWorlds = false;
+
+  /**
    * The current camera.
    *
    * @type {Camera}

@@ -20,6 +20,7 @@ import VerticalExaggeration from "../Core/VerticalExaggeration.js";
 import Transforms from "../Core/Transforms.js";
 import CameraEventAggregator from "./CameraEventAggregator.js";
 import CameraEventType from "./CameraEventType.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import MapMode2D from "./MapMode2D.js";
 import SceneMode from "./SceneMode.js";
 import SceneTransforms from "./SceneTransforms.js";
@@ -1959,7 +1960,7 @@ function spin3D(controller, startPosition, movement) {
       scratchMousePosition,
     );
     if (defined(mousePos)) {
-      let strafing = false;
+      let strafing;
       const ray = camera.getPickRay(
         movement.startPosition,
         pickGlobeScratchRay,
@@ -2367,7 +2368,6 @@ function zoom3D(controller, startPosition, movement) {
   if (!defined(controller._globe) && defined(distance)) {
     const targetDistance = camera.getMagnitude();
     if (targetDistance < distance) {
-      intersection = undefined;
       distance = undefined;
     }
   }
@@ -2993,8 +2993,17 @@ ScreenSpaceCameraController.prototype.onMap = function () {
   const camera = scene.camera;
 
   if (mode === SceneMode.COLUMBUS_VIEW) {
+    let positionX = camera.position.x;
+    if (scene.columbusRepeatWorlds === true) {
+      // Columbus repeat worlds: the camera may sit on any world copy; wrap
+      // its map-u coordinate into the primary world for the bounds check.
+      const worldWidth = ColumbusWorlds.getWorldWidth(scene.mapProjection);
+      positionX =
+        CesiumMath.mod(positionX + worldWidth * 0.5, worldWidth) -
+        worldWidth * 0.5;
+    }
     return (
-      Math.abs(camera.position.x) - this._maxCoord.x < 0 &&
+      Math.abs(positionX) - this._maxCoord.x < 0 &&
       Math.abs(camera.position.y) - this._maxCoord.y < 0
     );
   }

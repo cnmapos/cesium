@@ -8,7 +8,9 @@ import PixelDatatype from "../Renderer/PixelDatatype.js";
 import RenderState from "../Renderer/RenderState.js";
 import PassThrough from "../Shaders/PostProcessStages/PassThrough.js";
 import PassThroughDepth from "../Shaders/PostProcessStages/PassThroughDepth.js";
+import RestoreDepth from "../Shaders/RestoreDepth.js";
 import BlendingState from "./BlendingState.js";
+import DepthFunction from "./DepthFunction.js";
 import StencilConstants from "./StencilConstants.js";
 import StencilFunction from "./StencilFunction.js";
 import StencilOperation from "./StencilOperation.js";
@@ -33,6 +35,12 @@ function GlobeDepth() {
     supportsDepthTexture: true,
   });
   this._copyDepthFramebuffer = new FramebufferManager();
+  // Extra globe depth copies for frustum 1..n. Each frustum packs depth
+  // against its own near/far, so a single shared copy cannot be decoded
+  // correctly by the other frustums (e.g. a Columbus world copy pass).
+  this._copyDepthFramebuffers = [];
+  this._copyDepthCommands = [];
+  this._restoreDepthCommands = [];
   this._tempCopyDepthFramebuffer = new FramebufferManager();
   this._updateDepthFramebuffer = new FramebufferManager({
     createColorAttachments: false,
@@ -50,6 +58,7 @@ function GlobeDepth() {
   this._rs = undefined;
   this._rsBlend = undefined;
   this._rsUpdate = undefined;
+  this._rsRestoreDepth = undefined;
 
   this._useScissorTest = false;
   this._scissorRectangle = undefined;
@@ -148,6 +157,29 @@ function updateCopyCommands(globeDepth, context, width, height, passState) {
         reference: StencilConstants.CESIUM_3D_TILE_MASK,
         mask: StencilConstants.CESIUM_3D_TILE_MASK,
       },
+    });
+
+    // Writes a depth copy back into the depth buffer. Color writes are off and
+    // the quad's fragment depth comes from the sampled texture. The depth test
+    // must stay enabled (ALWAYS): a disabled depth test discards the write, so
+    // the quad would only paint color and never restore the buffer.
+    globeDepth._rsRestoreDepth = RenderState.fromCache({
+      viewport: viewport,
+      scissorTest: {
+        enabled: globeDepth._useScissorTest,
+        rectangle: globeDepth._scissorRectangle,
+      },
+      colorMask: {
+        red: false,
+        green: false,
+        blue: false,
+        alpha: false,
+      },
+      depthTest: {
+        enabled: true,
+        func: DepthFunction.ALWAYS,
+      },
+      depthMask: true,
     });
   }
 
@@ -272,6 +304,12 @@ GlobeDepth.prototype.update = function (
     );
   }
   this._copyDepthFramebuffer.update(context, width, height);
+  for (let i = 0; i < this._copyDepthFramebuffers.length; i++) {
+    const framebuffer = this._copyDepthFramebuffers[i];
+    if (defined(framebuffer)) {
+      framebuffer.update(context, width, height);
+    }
+  }
   updateCopyCommands(this, context, width, height, passState);
   context.uniformState.globeDepthTexture = undefined;
 
@@ -292,13 +330,165 @@ GlobeDepth.prototype.prepareColorTextures = function (context, blitStencil) {
   }
 };
 
-GlobeDepth.prototype.executeCopyDepth = function (context, passState) {
-  if (defined(this._copyDepthCommand)) {
-    this.prepareColorTextures(context);
-    this._copyDepthCommand.execute(context, passState);
-    context.uniformState.globeDepthTexture =
-      this._copyDepthFramebuffer.getColorTexture();
+/**
+ * Returns the copy depth framebuffer for a frustum, creating it on demand.
+ *
+ * @param {Context} context The context used for rendering.
+ * @param {number} frustumIndex The index of the frustum.
+ * @returns {FramebufferManager|undefined} The framebuffer manager, or
+ *          <code>undefined</code> for frustum 0 (the shared copy).
+ *
+ * @private
+ */
+GlobeDepth.prototype._getFrustumCopyDepthFramebuffer = function (
+  context,
+  frustumIndex,
+) {
+  if (frustumIndex === 0) {
+    return this._copyDepthFramebuffer;
   }
+  let framebuffer = this._copyDepthFramebuffers[frustumIndex];
+  if (!defined(framebuffer)) {
+    framebuffer = this._copyDepthFramebuffers[frustumIndex] =
+      new FramebufferManager();
+    const mainColorTexture = this._copyDepthFramebuffer.getColorTexture();
+    if (defined(mainColorTexture)) {
+      framebuffer.update(
+        context,
+        mainColorTexture.width,
+        mainColorTexture.height,
+      );
+    }
+  }
+  return framebuffer;
+};
+
+/**
+ * Returns the copy depth command for a frustum, creating it on demand.
+ *
+ * @param {Context} context The context used for rendering.
+ * @param {number} frustumIndex The index of the frustum.
+ * @returns {ViewportQuadCommand|undefined} The command, or <code>undefined</code>.
+ *
+ * @private
+ */
+GlobeDepth.prototype._getFrustumCopyDepthCommand = function (
+  context,
+  frustumIndex,
+) {
+  if (frustumIndex === 0) {
+    return this._copyDepthCommand;
+  }
+  let command = this._copyDepthCommands[frustumIndex];
+  if (!defined(command)) {
+    const globeDepth = this;
+    command = this._copyDepthCommands[frustumIndex] =
+      context.createViewportQuadCommand(PassThroughDepth, {
+        uniformMap: {
+          u_depthTexture: function () {
+            return globeDepth.colorFramebufferManager.getDepthStencilTexture();
+          },
+        },
+        owner: globeDepth,
+      });
+  }
+  command.renderState = this._rs;
+  command.framebuffer = this._getFrustumCopyDepthFramebuffer(
+    context,
+    frustumIndex,
+  ).framebuffer;
+  return command;
+};
+
+/**
+ * Copy the current globe depth into the copy depth texture of a frustum and
+ * make it the active <code>czm_globeDepthTexture</code>.
+ *
+ * @param {Context} context The context used for rendering.
+ * @param {PassState} passState Render state for subsequent rendering passes.
+ * @param {number} [frustumIndex=0] The index of the frustum being rendered.
+ *
+ * @private
+ */
+GlobeDepth.prototype.executeCopyDepth = function (
+  context,
+  passState,
+  frustumIndex,
+) {
+  const index = defined(frustumIndex) ? frustumIndex : 0;
+  const framebuffer = this._getFrustumCopyDepthFramebuffer(context, index);
+  const command = this._getFrustumCopyDepthCommand(context, index);
+  if (defined(command)) {
+    this.prepareColorTextures(context);
+    command.execute(context, passState);
+    context.uniformState.globeDepthTexture = framebuffer.getColorTexture();
+  }
+};
+
+/**
+ * Make an already copied globe depth texture the active
+ * <code>czm_globeDepthTexture</code>. Used by the Columbus world copy pass,
+ * which re-executes the classification commands of a primary frustum and must
+ * therefore read the depth copy produced for that same frustum.
+ *
+ * @param {Context} context The context used for rendering.
+ * @param {number} [frustumIndex=0] The index of the frustum.
+ *
+ * @private
+ */
+GlobeDepth.prototype.useCopyDepth = function (context, frustumIndex) {
+  const index = defined(frustumIndex) ? frustumIndex : 0;
+  let framebuffer = index > 0 ? this._copyDepthFramebuffers[index] : undefined;
+  if (!defined(framebuffer) || !defined(framebuffer.framebuffer)) {
+    // The requested frustum never produced a copy (e.g. the primary pass was
+    // skipped this frame); keep the shared copy so the uniform stays defined.
+    framebuffer = this._copyDepthFramebuffer;
+  }
+  context.uniformState.globeDepthTexture = framebuffer.getColorTexture();
+};
+
+/**
+ * Writes an already copied globe depth back into the depth buffer, so terrain
+ * classification can be re-executed after the primary pass finished. Ground
+ * classification needs the terrain depth in the buffer (its stencil pass depth
+ * tests the shadow volume against it), but the scene clears the globe depth
+ * after the primary classification pass whenever
+ * {@link Globe#depthTestAgainstTerrain} is off - the walkthrough used by the
+ * Columbus world copy pass then classifies against an empty buffer and draws
+ * nothing.
+ *
+ * @param {Context} context The context used for rendering.
+ * @param {PassState} passState The render pass state, whose framebuffer must be the one that receives the depth.
+ * @param {number} [frustumIndex=0] The index of the frustum whose copy should be restored.
+ *
+ * @private
+ */
+GlobeDepth.prototype.executeRestoreDepth = function (
+  context,
+  passState,
+  frustumIndex,
+) {
+  const index = defined(frustumIndex) ? frustumIndex : 0;
+  const framebuffer = this._getFrustumCopyDepthFramebuffer(context, index);
+  const renderState = this._rsRestoreDepth;
+  if (!defined(framebuffer.getColorTexture()) || !defined(renderState)) {
+    return;
+  }
+
+  let command = this._restoreDepthCommands[index];
+  if (!defined(command)) {
+    command = this._restoreDepthCommands[index] =
+      context.createViewportQuadCommand(RestoreDepth, {
+        uniformMap: {
+          u_depthTexture: function () {
+            return framebuffer.getColorTexture();
+          },
+        },
+        owner: this,
+      });
+  }
+  command.renderState = renderState;
+  command.execute(context, passState);
 };
 
 /**
@@ -379,6 +569,27 @@ GlobeDepth.prototype.destroy = function () {
   this._pickColorFramebuffer.destroy();
   this._outputFramebuffer.destroy();
   this._copyDepthFramebuffer.destroy();
+  for (let i = 0; i < this._copyDepthFramebuffers.length; i++) {
+    const framebuffer = this._copyDepthFramebuffers[i];
+    if (defined(framebuffer)) {
+      framebuffer.destroy();
+    }
+  }
+  this._copyDepthFramebuffers.length = 0;
+  for (let i = 0; i < this._copyDepthCommands.length; i++) {
+    const command = this._copyDepthCommands[i];
+    if (defined(command) && defined(command.shaderProgram)) {
+      command.shaderProgram = command.shaderProgram.destroy();
+    }
+  }
+  this._copyDepthCommands.length = 0;
+  for (let i = 0; i < this._restoreDepthCommands.length; i++) {
+    const command = this._restoreDepthCommands[i];
+    if (defined(command) && defined(command.shaderProgram)) {
+      command.shaderProgram = command.shaderProgram.destroy();
+    }
+  }
+  this._restoreDepthCommands.length = 0;
   this._tempCopyDepthFramebuffer.destroy();
   this._updateDepthFramebuffer.destroy();
 

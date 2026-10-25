@@ -26,6 +26,7 @@ import Ray from "../Core/Ray.js";
 import Rectangle from "../Core/Rectangle.js";
 import Transforms from "../Core/Transforms.js";
 import CameraFlightPath from "./CameraFlightPath.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import MapMode2D from "./MapMode2D.js";
 import SceneMode from "./SceneMode.js";
 
@@ -537,6 +538,18 @@ function convertTransformForColumbusView(camera) {
     camera._transform,
     camera._actualTransform,
   );
+
+  if (camera._scene.columbusRepeatWorlds === true) {
+    // Columbus repeat worlds: anchor the converted reference frame on the
+    // world copy nearest the camera (element [13] is the translation's
+    // map-u component in the column-major matrix) so the frame, and offsets
+    // within it, stay continuous with the camera's current copy.
+    camera._actualTransform[13] = ColumbusWorlds.nearestWorldU(
+      camera._positionWC.y,
+      camera._actualTransform[13],
+      camera._projection,
+    );
+  }
 }
 
 const scratchCartographic = new Cartographic();
@@ -752,6 +765,18 @@ function updateMembers(camera) {
       }
 
       camera._projection.unproject(positionENU, camera._positionCartographic);
+
+      if (
+        mode === SceneMode.COLUMBUS_VIEW &&
+        camera._scene.columbusRepeatWorlds === true
+      ) {
+        // Columbus repeat worlds: the camera may sit on any world copy, which
+        // unprojects to a longitude outside [-180°, 180°]; wrap it so
+        // rectangle containment checks see the equivalent primary point.
+        camera._positionCartographic.longitude = CesiumMath.negativePiToPi(
+          camera._positionCartographic.longitude,
+        );
+      }
     }
   }
 
@@ -1314,6 +1339,15 @@ function setViewCV(camera, position, hpr, convert) {
         scratchSetViewCartographic,
       );
       position = projection.project(cartographic, scratchSetViewCartesian);
+    }
+    if (camera._scene.columbusRepeatWorlds === true) {
+      // Columbus repeat worlds: keep the view continuous with the camera's
+      // current world copy instead of snapping back to the primary world.
+      position.x = ColumbusWorlds.nearestWorldU(
+        camera.positionWC.y,
+        position.x,
+        camera._projection,
+      );
     }
     Cartesian3.clone(position, camera.position);
   }
@@ -2874,12 +2908,18 @@ function pickMapColumbusView(camera, windowPosition, projection, result) {
 
   if (
     cart.latitude < -CesiumMath.PI_OVER_TWO ||
-    cart.latitude > CesiumMath.PI_OVER_TWO ||
-    cart.longitude < -Math.PI ||
-    cart.longitude > Math.PI
+    cart.latitude > CesiumMath.PI_OVER_TWO
   ) {
     return undefined;
   }
+
+  // The longitude may fall outside [-PI, PI] when Columbus repeat worlds are
+  // enabled and the picked point is on a translated world copy. Accept it:
+  // the returned ECEF position is the equivalent primary-world point, so
+  // picks on world copies succeed instead of returning undefined. Callers
+  // that need to know which copy was picked should use
+  // Globe.pickWorldCoordinates or Scene.pickPosition, which operate in scene
+  // (map-plane) world coordinates.
 
   return projection.ellipsoid.cartographicToCartesian(cart, result);
 }
@@ -3189,6 +3229,19 @@ function createAnimationCV(camera, duration) {
   camera.cameraToWorldCoordinatesPoint(center, center);
 
   position = camera.cameraToWorldCoordinatesPoint(camera.position, posScratch);
+
+  if (camera._scene.columbusRepeatWorlds === true) {
+    // Columbus repeat worlds: the camera may sit on any world copy; wrapping
+    // its map-u coordinate into the primary world is visually identical (the
+    // map repeats) and keeps the bounds checks below meaningful.
+    const worldWidth = ColumbusWorlds.getWorldWidth(camera._projection);
+    position.y =
+      CesiumMath.mod(position.y + worldWidth * 0.5, worldWidth) -
+      worldWidth * 0.5;
+    center.y =
+      CesiumMath.mod(center.y + worldWidth * 0.5, worldWidth) -
+      worldWidth * 0.5;
+  }
 
   const tanPhi = Math.tan(camera.frustum.fovy * 0.5);
   const tanTheta = camera.frustum.aspectRatio * tanPhi;

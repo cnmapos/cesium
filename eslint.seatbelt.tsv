@@ -16,7 +16,6 @@
 "packages/engine/Source/Core/EllipseGeometryLibrary.js"	"no-useless-assignment"	2
 "packages/engine/Source/Core/EllipsoidGeodesic.js"	"no-useless-assignment"	3
 "packages/engine/Source/Core/EllipsoidRhumbLine.js"	"no-useless-assignment"	1
-"packages/engine/Source/Core/GroundPolylineGeometry.js"	"no-useless-assignment"	2
 "packages/engine/Source/Core/Heap.js"	"no-useless-assignment"	1
 "packages/engine/Source/Core/JulianDate.js"	"no-useless-assignment"	1
 "packages/engine/Source/Core/Matrix2.js"	"no-useless-assignment"	2
@@ -45,7 +44,6 @@
 "packages/engine/Source/Scene/ClippingPlaneCollection.js"	"no-useless-assignment"	2
 "packages/engine/Source/Scene/EdgeFramebuffer.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/GlobeSurfaceTile.js"	"no-useless-assignment"	1
-"packages/engine/Source/Scene/GlobeSurfaceTileProvider.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/I3SDataProvider.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/I3SLayer.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/I3SNode.js"	"no-useless-assignment"	2
@@ -56,10 +54,7 @@
 "packages/engine/Source/Scene/Model/I3dmLoader.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/Model/InstancingPipelineStage.js"	"no-useless-assignment"	4
 "packages/engine/Source/Scene/PntsParser.js"	"no-useless-assignment"	1
-"packages/engine/Source/Scene/PolylineCollection.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/PostProcessStage.js"	"no-useless-assignment"	1
-"packages/engine/Source/Scene/Scene.js"	"no-useless-assignment"	2
-"packages/engine/Source/Scene/ScreenSpaceCameraController.js"	"no-useless-assignment"	2
 "packages/engine/Source/Scene/TerrainFillMesh.js"	"no-useless-assignment"	2
 "packages/engine/Source/Scene/Vector3DTileContent.js"	"no-useless-assignment"	1
 "packages/engine/Source/Scene/View.js"	"no-useless-assignment"	1
@@ -82,3 +77,4 @@
 "packages/sandcastle/gallery/geometry-and-appearances-dev/main.js"	"no-useless-assignment"	1
 "packages/widgets/Source/Animation/AnimationViewModel.js"	"no-useless-assignment"	1
 "packages/widgets/Specs/Animation/AnimationViewModelSpec.js"	"no-useless-assignment"	1
+

@@ -20,6 +20,7 @@ import GlobeFS from "../Shaders/GlobeFS.js";
 import GlobeVS from "../Shaders/GlobeVS.js";
 import AtmosphereCommon from "../Shaders/AtmosphereCommon.js";
 import GroundAtmosphere from "../Shaders/GroundAtmosphere.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import GlobeSurfaceShaderSet from "./GlobeSurfaceShaderSet.js";
 import GlobeSurfaceTileProvider from "./GlobeSurfaceTileProvider.js";
 import GlobeTranslucency from "./GlobeTranslucency.js";
@@ -724,17 +725,19 @@ function makeShadersDirty(globe) {
 
 function createComparePickTileFunction(rayOrigin) {
   return function (a, b) {
-    const aDist = BoundingSphere.distanceSquaredTo(
-      a.pickBoundingSphere,
-      rayOrigin,
-    );
-    const bDist = BoundingSphere.distanceSquaredTo(
-      b.pickBoundingSphere,
-      rayOrigin,
-    );
+    const aDist = BoundingSphere.distanceSquaredTo(a.sphere, rayOrigin);
+    const bDist = BoundingSphere.distanceSquaredTo(b.sphere, rayOrigin);
 
     return aDist - bDist;
   };
+}
+
+// Columbus repeat worlds: how many translated world copies to test on either
+// side of the pick ray's own world when repeat worlds are enabled.
+const GLOBE_COLUMBUS_MAX_EXTRA_WORLDS = 2;
+
+function getGlobeColumbusWorldWidth(projection) {
+  return ColumbusWorlds.getWorldWidth(projection);
 }
 
 const scratchArray = [];
@@ -742,6 +745,8 @@ const scratchSphereIntersectionResult = {
   start: 0.0,
   stop: 0.0,
 };
+const scratchPickOffsetSphere = new BoundingSphere();
+const scratchColumbusPickRay = new Ray();
 
 /**
  * Find an intersection between a ray and the globe surface that was rendered. The ray must be given in world coordinates.
@@ -773,6 +778,12 @@ Globe.prototype.pickWorldCoordinates = function (
 
   const mode = scene.mode;
   const projection = scene.mapProjection;
+
+  const repeatWorlds =
+    scene.columbusRepeatWorlds === true && mode === SceneMode.COLUMBUS_VIEW;
+  const worldWidth = repeatWorlds
+    ? getGlobeColumbusWorldWidth(projection)
+    : 0.0;
 
   const sphereIntersections = scratchArray;
   sphereIntersections.length = 0;
@@ -810,13 +821,48 @@ Globe.prototype.pickWorldCoordinates = function (
       continue;
     }
 
-    const boundingSphereIntersection = IntersectionTests.raySphere(
-      ray,
-      boundingVolume,
-      scratchSphereIntersectionResult,
-    );
-    if (defined(boundingSphereIntersection)) {
-      sphereIntersections.push(surfaceTile);
+    if (!repeatWorlds) {
+      const boundingSphereIntersection = IntersectionTests.raySphere(
+        ray,
+        boundingVolume,
+        scratchSphereIntersectionResult,
+      );
+      if (defined(boundingSphereIntersection)) {
+        sphereIntersections.push({
+          surfaceTile,
+          sphere: boundingVolume,
+          offset: 0.0,
+        });
+      }
+      continue;
+    }
+
+    // Columbus repeat worlds: a translated copy of this tile may be hit even
+    // when the primary sphere is not. Test the copies around the ray's own
+    // world so points beyond the ±180° meridian pick correctly.
+    const rayWorld = Math.round(ray.origin.y / worldWidth);
+    for (
+      let w = rayWorld - GLOBE_COLUMBUS_MAX_EXTRA_WORLDS;
+      w <= rayWorld + GLOBE_COLUMBUS_MAX_EXTRA_WORLDS;
+      ++w
+    ) {
+      const offset = w * worldWidth;
+      const offsetSphere = scratchPickOffsetSphere;
+      Cartesian3.clone(boundingVolume.center, offsetSphere.center);
+      offsetSphere.center.y += offset;
+      offsetSphere.radius = boundingVolume.radius;
+      const boundingSphereIntersection = IntersectionTests.raySphere(
+        ray,
+        offsetSphere,
+        scratchSphereIntersectionResult,
+      );
+      if (defined(boundingSphereIntersection)) {
+        sphereIntersections.push({
+          surfaceTile,
+          sphere: BoundingSphere.clone(offsetSphere, new BoundingSphere()),
+          offset,
+        });
+      }
     }
   }
 
@@ -825,13 +871,34 @@ Globe.prototype.pickWorldCoordinates = function (
   let intersection;
   const length = sphereIntersections.length;
   for (let i = 0; i < length; ++i) {
-    intersection = sphereIntersections[i].pick(
-      ray,
-      scene.mode,
-      scene.mapProjection,
-      cullBackFaces,
-      result,
-    );
+    const candidate = sphereIntersections[i];
+    const offset = candidate.offset;
+    if (offset === 0.0) {
+      intersection = candidate.surfaceTile.pick(
+        ray,
+        scene.mode,
+        scene.mapProjection,
+        cullBackFaces,
+        result,
+      );
+    } else {
+      // Pick against the copy by shifting the ray into the primary world,
+      // then shifting the hit point back onto the copy.
+      const pickRay = scratchColumbusPickRay;
+      Cartesian3.clone(ray.origin, pickRay.origin);
+      pickRay.origin.y -= offset;
+      Cartesian3.clone(ray.direction, pickRay.direction);
+      intersection = candidate.surfaceTile.pick(
+        pickRay,
+        scene.mode,
+        scene.mapProjection,
+        cullBackFaces,
+        result,
+      );
+      if (defined(intersection)) {
+        intersection.y += offset;
+      }
+    }
     if (defined(intersection)) {
       break;
     }
