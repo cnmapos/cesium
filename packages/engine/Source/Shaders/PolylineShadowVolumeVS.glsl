@@ -136,6 +136,13 @@ void main()
     //       o---------- polyline segment ---->
     //
     float width = czm_batchTable_width(batchId);
+    // HZ patch: negative batch width encodes metric sizing (world meters).
+    // Convert to a pixel-equivalent here so the metersPerPixel multiply below
+    // restores the metric world width every frame, with no CPU involvement.
+    if (width < 0.0)
+    {
+        width = clamp((-width) / czm_metersPerPixel(positionEC), 1.0, 4096.0);
+    }
 #ifdef WIDTH_VARYING
     v_width = width;
 #endif

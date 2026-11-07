@@ -52,6 +52,36 @@ describe("Scene/MVTDataProvider", function () {
     provider.destroy();
   });
 
+  it("inherits globe uniform-level mode each frame", function () {
+    const uniformLevelMode = {
+      enabled: true,
+      reference: "center",
+      maxDeviationLevels: 1,
+      maxCoarsenLevels: 1,
+    };
+    const provider = new MVTDataProvider(
+      "https://example.invalid/{z}/{x}/{y}",
+      {
+        inheritGlobeUniformLevelMode: true,
+        scene: {
+          globe: {
+            uniformLevelMode,
+          },
+        },
+      },
+    );
+    provider._tileset = {
+      destroy: function () {
+        return undefined;
+      },
+    };
+
+    provider.update({ frameNumber: 1 });
+
+    expect(provider._tileset.uniformLevelMode).toBe(uniformLevelMode);
+    provider.destroy();
+  });
+
   it("clamps an unsupported GeoVis maximum zoom", function () {
     const provider = new MVTDataProvider(
       "https://example.invalid/{z}/{x}/{y}",

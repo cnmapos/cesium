@@ -649,6 +649,8 @@ function DynamicGeometryUpdater(primitives, groundPrimitives, geometryUpdater) {
   this._primitives = primitives;
   this._groundPrimitives = groundPrimitives;
   this._groundPolylinePrimitive = undefined;
+  this._groundGeometrySignature = undefined;
+  this._colorAppearance = undefined;
   this._material = undefined;
   this._geometryUpdater = geometryUpdater;
   this._positions = [];
@@ -690,6 +692,81 @@ function invalidateGroundPolylinePrimitiveGeometry(groundPolylinePrimitive) {
   }
   groundPolylinePrimitive._sp2D = undefined;
   groundPolylinePrimitive._spMorph = undefined;
+}
+
+/**
+ * Compares the evaluated ground polyline geometry attributes with the ones the
+ * current primitive was built from and refreshes the stored signature.
+ * Returns true when the primitive has to be rebuilt.
+ *
+ * Entity polylines driven by a dynamic property (e.g. a CallbackProperty used
+ * by the editors) are evaluated every frame. Editors usually return the same
+ * positions frame after frame - the camera moves, not the line - so rebuilding
+ * the ground polyline primitive unconditionally would destroy its vertex
+ * arrays and shader programs on every rendered frame, which is very expensive
+ * and makes the line flicker while the view changes.
+ *
+ * @private
+ */
+function updateGroundPolylineSignature(
+  dynamicUpdater,
+  positions,
+  width,
+  arcType,
+  granularity,
+  color,
+) {
+  const length = positions.length;
+  const previous = dynamicUpdater._groundGeometrySignature;
+  const sameLength = defined(previous) && previous.xyz.length === length * 3;
+  const xyz = sameLength ? previous.xyz : new Float64Array(length * 3);
+  const colorChanged =
+    !sameLength ||
+    !defined(previous.color) !== !defined(color) ||
+    (defined(color) &&
+      (previous.color.red !== color.red ||
+        previous.color.green !== color.green ||
+        previous.color.blue !== color.blue ||
+        previous.color.alpha !== color.alpha));
+  let changed =
+    !sameLength ||
+    colorChanged ||
+    previous.width !== width ||
+    previous.arcType !== arcType ||
+    previous.granularity !== granularity;
+
+  // Compare the positions by value: the editors move the nodes of the line
+  // while the property keeps returning an array of the same length, so only
+  // the coordinates tell an edit from a plain re-evaluation.
+  for (let i = 0, j = 0; i < length; ++i) {
+    const position = positions[i];
+    const x = position.x;
+    const y = position.y;
+    const z = position.z;
+    if (!sameLength || xyz[j] !== x || xyz[j + 1] !== y || xyz[j + 2] !== z) {
+      changed = true;
+    }
+    xyz[j++] = x;
+    xyz[j++] = y;
+    xyz[j++] = z;
+  }
+
+  dynamicUpdater._groundGeometrySignature = {
+    xyz,
+    width,
+    arcType,
+    granularity,
+    // Copy the components: colors are evaluated into shared scratch objects.
+    color: defined(color)
+      ? {
+          red: color.red,
+          green: color.green,
+          blue: color.blue,
+          alpha: color.alpha,
+        }
+      : undefined,
+  };
+  return changed;
 }
 
 DynamicGeometryUpdater.prototype.update = function (time) {
@@ -754,9 +831,45 @@ DynamicGeometryUpdater.prototype.update = function (time) {
     }
 
     const fillMaterialProperty = geometryUpdater.fillMaterialProperty;
+    const isColorMaterial =
+      fillMaterialProperty instanceof ColorMaterialProperty;
+
+    // Per-instance attributes (show, distance display condition and the
+    // material color) are baked into the geometry instance, so any animated
+    // one of them requires a rebuild every frame.
+    const attributesAnimated =
+      !Property.isConstant(polyline._show) ||
+      !Property.isConstant(geometryUpdater._distanceDisplayConditionProperty) ||
+      (isColorMaterial &&
+        defined(fillMaterialProperty.color) &&
+        !Property.isConstant(fillMaterialProperty.color));
+
+    // The per-instance color is part of the geometry instance as well.
+    const colorAttribute =
+      isColorMaterial && defined(fillMaterialProperty.color)
+        ? fillMaterialProperty.color.getValue(time, scratchColor)
+        : undefined;
+
+    // Only rebuild the ground polyline primitive when the evaluated geometry
+    // actually changed. See updateGroundPolylineSignature.
+    const geometryChanged =
+      attributesAnimated ||
+      updateGroundPolylineSignature(
+        this,
+        positions,
+        geometryUpdater._groundGeometryOptions.width,
+        geometryUpdater._groundGeometryOptions.arcType,
+        geometryUpdater._groundGeometryOptions.granularity,
+        colorAttribute,
+      );
+
     let appearance;
-    if (fillMaterialProperty instanceof ColorMaterialProperty) {
-      appearance = new PolylineColorAppearance();
+    if (isColorMaterial) {
+      // Reuse one appearance instance: assigning a new appearance makes the
+      // primitive rebuild its render states and shader programs.
+      appearance =
+        this._colorAppearance ??
+        (this._colorAppearance = new PolylineColorAppearance());
     } else {
       const material = MaterialProperty.getValue(
         time,
@@ -770,7 +883,6 @@ DynamicGeometryUpdater.prototype.update = function (time) {
       this._material = material;
     }
 
-    const geometryInstance = geometryUpdater.createFillGeometryInstance(time);
     const classificationType =
       geometryUpdater.classificationTypeProperty.getValue(time);
     const zIndex = Property.getValueOrUndefined(geometryUpdater.zIndex, time);
@@ -779,7 +891,7 @@ DynamicGeometryUpdater.prototype.update = function (time) {
     if (!defined(this._groundPolylinePrimitive)) {
       this._groundPolylinePrimitive = groundPrimitives.add(
         new GroundPolylinePrimitive({
-          geometryInstances: geometryInstance,
+          geometryInstances: geometryUpdater.createFillGeometryInstance(time),
           appearance: appearance,
           classificationType: classificationType,
           asynchronous: false,
@@ -791,9 +903,15 @@ DynamicGeometryUpdater.prototype.update = function (time) {
       if (groundPolylinePrimitive._zIndex !== zIndexKey) {
         groundPrimitives.set(groundPolylinePrimitive, zIndexKey);
       }
-      groundPolylinePrimitive.geometryInstances = geometryInstance;
-      invalidateGroundPolylinePrimitiveGeometry(groundPolylinePrimitive);
-      groundPolylinePrimitive.appearance = appearance;
+      if (geometryChanged) {
+        groundPolylinePrimitive.geometryInstances =
+          geometryUpdater.createFillGeometryInstance(time);
+        invalidateGroundPolylinePrimitiveGeometry(groundPolylinePrimitive);
+      }
+      // Animated materials still need their uniforms refreshed per frame.
+      if (geometryChanged || !isColorMaterial) {
+        groundPolylinePrimitive.appearance = appearance;
+      }
       groundPolylinePrimitive.classificationType = classificationType;
     }
 

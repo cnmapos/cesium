@@ -8,6 +8,7 @@ import EasingFunction from "../Core/EasingFunction.js";
 import CesiumMath from "../Core/Math.js";
 import PerspectiveFrustum from "../Core/PerspectiveFrustum.js";
 import PerspectiveOffCenterFrustum from "../Core/PerspectiveOffCenterFrustum.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import SceneMode from "./SceneMode.js";
 
 /**
@@ -436,6 +437,19 @@ CameraFlightPath.createTween = function (scene, options) {
   }
 
   const camera = scene.camera;
+
+  if (mode === SceneMode.COLUMBUS_VIEW && scene.columbusRepeatWorlds === true) {
+    // Columbus repeat worlds: fly to the copy of the destination nearest the
+    // camera's current copy so the flight pans locally instead of crossing a
+    // full world. In local (u, v, h) coordinates, u is the x component.
+    scratchDestination.x = ColumbusWorlds.nearestWorldU(
+      camera.position.x,
+      destination.x,
+      projection,
+    );
+    destination = scratchDestination;
+  }
+
   const transform = options.endTransform;
   if (defined(transform)) {
     camera._setTransform(transform);

@@ -50,6 +50,7 @@ const scratchOutlineColor = new Color();
  * @property {number} [minimumRebuildInterval]
  * @property {number} [glyphReclaimMargin]
  * @property {number} [maximumVisibleLabels]
+ * @property {number} [threePointDepthTestDistance] Distance within which labels are depth-tested at three key points.
  */
 
 /**
@@ -93,8 +94,17 @@ class MvtLabelManager {
       0,
       Math.floor(options.maximumVisibleLabels ?? 1000),
     );
+    this._threePointDepthTestDistance = Math.max(
+      0,
+      options.threePointDepthTestDistance ??
+        getMaximumThreePointDepthTestDistance(this._styles),
+    );
     this._getTimestamp = getTimestamp;
-    this._labelCollection = new LabelCollection({ scene: this._scene });
+    this._labelCollection = new LabelCollection({
+      scene: this._scene,
+      threePointDepthTestDistance: this._threePointDepthTestDistance,
+      alwaysThreePointDepthTest: true,
+    });
     /** @type {Set<*>} */
     this._tiles = new Set();
     /** @type {Array<*>} */
@@ -105,6 +115,8 @@ class MvtLabelManager {
     this._nextVisibleCandidates = [];
     /** @type {Set<*>} */
     this._nextVisibleSet = new Set();
+    /** @type {Set<*>} */
+    this._retainedCandidates = new Set();
     /** @type {Set<string>} */
     this._acceptedIds = new Set();
     /** @type {Map<string, Array<Cartesian2>>} */
@@ -194,12 +206,90 @@ class MvtLabelManager {
     const acceptedIds = this._acceptedIds;
     const textPositions = this._textPositions;
     const nextVisibleSet = this._nextVisibleSet;
+    const retainedCandidates = this._retainedCandidates;
     nextVisibleCandidates.length = 0;
     acceptedIds.clear();
     textPositions.clear();
     nextVisibleSet.clear();
+    retainedCandidates.clear();
     this._frameCandidates.sort(compareCandidates);
+    const currentCandidates = new Set(this._frameCandidates);
+    const currentCandidatesByDedupeKey = new Map();
     for (const candidate of this._frameCandidates) {
+      const dedupeKey = getCandidateDedupeKey(candidate);
+      if (defined(dedupeKey) && !currentCandidatesByDedupeKey.has(dedupeKey)) {
+        currentCandidatesByDedupeKey.set(dedupeKey, candidate);
+      }
+    }
+    // Rebuilding the collision layout from scratch makes the winning symbol
+    // alternate while tiles stream in and out. Keep labels that remain valid
+    // for another frame, then fill only unoccupied space with new candidates.
+    for (const candidate of previousVisibleCandidates) {
+      const dedupeKey = getCandidateDedupeKey(candidate);
+      const currentCandidate = currentCandidates.has(candidate)
+        ? candidate
+        : currentCandidatesByDedupeKey.get(dedupeKey);
+      if (!defined(currentCandidate)) {
+        continue;
+      }
+      const style = this._styles[currentCandidate.styleIndex];
+      const styleZoom = this._displayZoom ?? currentCandidate.tileZ;
+      if (
+        styleZoom < style.minZoom ||
+        styleZoom > style.maxZoom ||
+        (defined(dedupeKey) && acceptedIds.has(dedupeKey))
+      ) {
+        continue;
+      }
+
+      getWorldPosition(currentCandidate, scratchWorldPosition);
+      if (defined(scene)) {
+        const windowPosition = SceneTransforms.worldToWindowCoordinates(
+          scene,
+          scratchWorldPosition,
+          scratchWindowPosition,
+        );
+        if (!isInsideViewport(scene, windowPosition)) {
+          continue;
+        }
+        const rectangle = makeCollisionRectangle(
+          currentCandidate,
+          style,
+          windowPosition,
+          scratchCollisionRectangle,
+        );
+        if (this._collisionTree.collides(rectangle)) {
+          continue;
+        }
+        if (
+          isDuplicateText(textPositions, currentCandidate.text, windowPosition)
+        ) {
+          continue;
+        }
+        this._collisionTree.insert({ ...rectangle });
+      }
+
+      this._reuseMatchingLabel(currentCandidate);
+      getOrCreateLabel(
+        this._labelCollection,
+        currentCandidate,
+        style,
+        scratchWorldPosition,
+        this._heightReference,
+      );
+      this._activateCandidate(currentCandidate, style, this._frameTime);
+      nextVisibleCandidates.push(currentCandidate);
+      nextVisibleSet.add(currentCandidate);
+      retainedCandidates.add(currentCandidate);
+      if (defined(dedupeKey)) {
+        acceptedIds.add(dedupeKey);
+      }
+    }
+
+    for (const candidate of this._frameCandidates) {
+      if (retainedCandidates.has(candidate)) {
+        continue;
+      }
       // Candidates are priority-sorted, so the cap drops the least important
       // labels. It also keeps the live glyph set inside the atlas budget.
       if (nextVisibleCandidates.length >= this._maximumVisibleLabels) {
@@ -578,19 +668,21 @@ function elapsedSeconds(time, startTime) {
 function getViewZoom(frameState) {
   const camera = frameState.camera;
   const height = camera?.positionCartographic?.height;
-  const drawingBufferHeight = frameState.context?.drawingBufferHeight;
+  const pixelRatio = frameState.pixelRatio ?? 1;
+  const viewportHeight =
+    (frameState.context?.drawingBufferHeight ?? 0) / pixelRatio;
   const verticalFov = getVerticalFov(camera?.frustum);
   if (
     !Number.isFinite(height) ||
-    !Number.isFinite(drawingBufferHeight) ||
+    !Number.isFinite(viewportHeight) ||
     !Number.isFinite(verticalFov) ||
     height <= 0 ||
-    drawingBufferHeight <= 0
+    viewportHeight <= 0
   ) {
     return undefined;
   }
   const metersPerPixel =
-    (2.0 * height * Math.tan(verticalFov * 0.5)) / drawingBufferHeight;
+    (2.0 * height * Math.tan(verticalFov * 0.5)) / viewportHeight;
   const zoom = Math.log2(
     earthCircumference / (webMercatorTileSize * metersPerPixel),
   );
@@ -708,6 +800,11 @@ function normalizeStyles(styles) {
         Color.BLACK,
       ),
       outlineWidth: style.outlineWidth ?? style["text-halo-width"] ?? 1,
+      disableDepthTestDistance:
+        style.disableDepthTestDistance ?? style["disable-depth-test-distance"],
+      threePointDepthTestDistance:
+        style.threePointDepthTestDistance ??
+        style["three-point-depth-test-distance"],
       collisionPadding: getCollisionPadding(style),
       pixelOffset: new Cartesian2(
         style.pixelOffset?.x ?? style["text-offset"]?.[0] ?? 0,
@@ -716,6 +813,18 @@ function normalizeStyles(styles) {
       filter: style.filter,
     };
   });
+}
+
+/** @param {Array<*>} styles @returns {number|undefined} */
+function getMaximumThreePointDepthTestDistance(styles) {
+  let maximum;
+  for (const style of styles) {
+    const distance = style.threePointDepthTestDistance;
+    if (Number.isFinite(distance) && distance >= 0) {
+      maximum = Math.max(maximum ?? 0, distance);
+    }
+  }
+  return maximum;
 }
 
 /** @param {*} value @param {Color} fallback @returns {Color} */
@@ -834,6 +943,7 @@ function getOrCreateLabel(
       fillColor: style.fillColor,
       outlineColor: style.outlineColor,
       outlineWidth: style.outlineWidth,
+      disableDepthTestDistance: style.disableDepthTestDistance,
       style: LabelStyle.FILL_AND_OUTLINE,
       horizontalOrigin: HorizontalOrigin.CENTER,
       verticalOrigin: VerticalOrigin.CENTER,

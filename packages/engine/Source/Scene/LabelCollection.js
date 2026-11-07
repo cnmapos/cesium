@@ -597,6 +597,7 @@ function destroyLabel(labelCollection, label) {
  * @param {boolean} [options.show=true] Determines if the labels in the collection will be shown.
  * @param {number} [options.coarseDepthTestDistance] The distance from the camera, beyond which, labels are depth-tested against an approximation of the globe ellipsoid rather than against the full globe depth buffer. If unspecified, the default value is determined relative to the value of {@link Ellipsoid.default}.
  * @param {number} [options.threePointDepthTestDistance] The distance from the camera, within which, lables with a {@link Label#heightReference} value of {@link HeightReference.CLAMP_TO_GROUND} or {@link HeightReference.CLAMP_TO_TERRAIN} are depth tested against three key points. This ensures that if any key point of the label is visible, the whole label will be visible. If unspecified, the default value is determined relative to the value of {@link Ellipsoid.default}.
+ * @param {boolean} [options.alwaysThreePointDepthTest=false] Enables the three-point depth test even when {@link Globe#depthTestAgainstTerrain} is false.
  * @performance For best performance, prefer a few collections, each with many labels, to
  * many collections with only a few labels each.  Avoid having collections where some
  * labels change every frame and others do not; instead, create one or more collections
@@ -634,6 +635,7 @@ function LabelCollection(options) {
     }),
     coarseDepthTestDistance: options.coarseDepthTestDistance,
     threePointDepthTestDistance: options.threePointDepthTestDistance,
+    alwaysThreePointDepthTest: options.alwaysThreePointDepthTest,
   });
   this._backgroundBillboardCollection = backgroundBillboardCollection;
   this._backgroundBillboardTexture = new BillboardTexture(
@@ -645,6 +647,7 @@ function LabelCollection(options) {
     batchTable: this._batchTable,
     coarseDepthTestDistance: options.coarseDepthTestDistance,
     threePointDepthTestDistance: options.threePointDepthTestDistance,
+    alwaysThreePointDepthTest: options.alwaysThreePointDepthTest,
   });
   this._glyphBillboardCollection._sdf = true;
 

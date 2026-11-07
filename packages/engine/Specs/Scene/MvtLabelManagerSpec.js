@@ -266,6 +266,38 @@ describe("Scene/MvtLabelManager", function () {
     manager.destroy();
   });
 
+  it("keeps display zoom stable across rendering resolution changes", function () {
+    function createManager() {
+      return new MvtLabelManager({
+        scene: undefined,
+        styles: [{ textField: "name", minZoom: 8 }],
+      });
+    }
+
+    const standardManager = createManager();
+    const highResolutionManager = createManager();
+    const createFrameState = (drawingBufferHeight) => ({
+      camera: {
+        positionCartographic: { height: 13186.0 },
+        frustum: { fovy: 1.0 },
+      },
+      context: { drawingBufferHeight },
+      pixelRatio: 1,
+    });
+
+    standardManager._updateDisplayZoom(createFrameState(900));
+    highResolutionManager._updateDisplayZoom({
+      ...createFrameState(1800),
+      pixelRatio: 2,
+    });
+
+    expect(highResolutionManager._displayZoom).toBe(
+      standardManager._displayZoom,
+    );
+    standardManager.destroy();
+    highResolutionManager.destroy();
+  });
+
   it("submits selected tiles instead of a higher cached level", function () {
     const manager = new MvtLabelManager({
       scene: undefined,
@@ -534,6 +566,26 @@ describe("Scene/MvtLabelManager", function () {
     expect(manager._styles[0].collisionPadding.x).toBe(6);
     expect(manager._styles[0].collisionPadding.y).toBe(6);
     expect(manager._heightReference).toBe(HeightReference.CLAMP_TO_GROUND);
+    manager.destroy();
+  });
+
+  it("uses whole-label depth testing without disabling globe occlusion", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name", threePointDepthTestDistance: 200000 }],
+    });
+
+    expect(manager._styles[0].disableDepthTestDistance).toBeUndefined();
+    expect(manager._threePointDepthTestDistance).toBe(200000);
+    expect(manager._labelCollection.threePointDepthTestDistance).toBe(200000);
+    expect(
+      manager._labelCollection._backgroundBillboardCollection
+        ._alwaysThreePointDepthTest,
+    ).toBe(true);
+    expect(
+      manager._labelCollection._glyphBillboardCollection
+        ._alwaysThreePointDepthTest,
+    ).toBe(true);
     manager.destroy();
   });
 

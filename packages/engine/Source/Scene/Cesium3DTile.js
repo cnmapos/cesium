@@ -945,13 +945,34 @@ Cesium3DTile.prototype.getScreenSpaceError = function (
     error = geometricError / pixelSize;
   } else {
     // Avoid divide by zero when viewer is inside the tile
-    const distance = Math.max(this._distanceToCamera, CesiumMath.EPSILON7);
+    const tileDistance = Math.max(this._distanceToCamera, CesiumMath.EPSILON7);
     const sseDenominator = frustum.sseDenominator;
-    error = (geometricError * height) / (distance * sseDenominator);
+    error = (geometricError * height) / (tileDistance * sseDenominator);
+    const uniformLevel = tileset._uniformLevelState;
+    if (uniformLevel.active) {
+      const referenceDistance = Math.max(
+        uniformLevel.referenceDistance,
+        CesiumMath.EPSILON7,
+      );
+      const uniformError =
+        (geometricError * height) / (referenceDistance * sseDenominator);
+      const cappedUniformError = CesiumMath.clamp(
+        uniformError,
+        error / uniformLevel.coarsenFactor,
+        error * uniformLevel.deviationFactor,
+      );
+      error += (cappedUniformError - error) * uniformLevel.engage;
+    }
     if (tileset.dynamicScreenSpaceError) {
       const density = tileset._dynamicScreenSpaceErrorComputedDensity;
       const factor = tileset.dynamicScreenSpaceErrorFactor;
-      const dynamicError = CesiumMath.fog(distance, density) * factor;
+      let dynamicError = CesiumMath.fog(tileDistance, density) * factor;
+      if (uniformLevel.active) {
+        const uniformDynamicError =
+          CesiumMath.fog(uniformLevel.referenceDistance, density) * factor;
+        dynamicError +=
+          (uniformDynamicError - dynamicError) * uniformLevel.engage;
+      }
       error -= dynamicError;
     }
   }

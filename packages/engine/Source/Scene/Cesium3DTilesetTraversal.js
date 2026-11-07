@@ -192,6 +192,17 @@ function isOnScreenLongEnough(tile, frameState) {
  */
 Cesium3DTilesetTraversal.updateTile = function (tile, frameState) {
   updateTileVisibility(tile, frameState);
+  const uniformMode = tile.tileset.uniformLevelMode;
+  if (
+    defined(uniformMode) &&
+    uniformMode.enabled === true &&
+    defined(tile._distanceToCamera)
+  ) {
+    const nearest = tile.tileset._nearestTileDistanceThisFrame;
+    if (!defined(nearest) || tile._distanceToCamera < nearest) {
+      tile.tileset._nearestTileDistanceThisFrame = tile._distanceToCamera;
+    }
+  }
   tile.updateExpiration();
 
   tile._wasMinPriorityChild = false;

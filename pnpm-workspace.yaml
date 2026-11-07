@@ -2,3 +2,9 @@ packages:
   - "packages/engine"
   - "packages/widgets"
   - "packages/sandcastle"
+allowBuilds:
+  '@ast-grep/cli': true
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true

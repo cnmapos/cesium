@@ -23,10 +23,10 @@ import assert from "node:assert";
 const scope = "hztxi";
 
 /** Published npm name for each workspace folder under `packages/` */
-const workspaceToNpmPackage = {
+const workspaceToNpmPackage = /** @type {Record<string, string>} */ ({
   engine: `@${scope}/cesium-engine`,
   widgets: `@${scope}/cesium-widgets`,
-};
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.join(__dirname, "..");

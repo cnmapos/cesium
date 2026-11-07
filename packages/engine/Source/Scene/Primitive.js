@@ -683,18 +683,20 @@ function createBatchTable(primitive, context) {
   primitive._batchTableOffsetAttribute2DIndex = offset2DIndex;
 }
 
-function cloneAttribute(attribute) {
-  let clonedValues;
-  if (Array.isArray(attribute.values)) {
-    clonedValues = attribute.values.slice(0);
-  } else {
-    clonedValues = new attribute.values.constructor(attribute.values);
+function cloneValues(values) {
+  if (Array.isArray(values)) {
+    return values.slice(0);
   }
+  const ValuesConstructor = values.constructor;
+  return new ValuesConstructor(values);
+}
+
+function cloneAttribute(attribute) {
   return new GeometryAttribute({
     componentDatatype: attribute.componentDatatype,
     componentsPerAttribute: attribute.componentsPerAttribute,
     normalize: attribute.normalize,
-    values: clonedValues,
+    values: cloneValues(attribute.values),
   });
 }
 
@@ -709,12 +711,7 @@ function cloneGeometry(geometry) {
 
   let indices;
   if (defined(geometry.indices)) {
-    const sourceValues = geometry.indices;
-    if (Array.isArray(sourceValues)) {
-      indices = sourceValues.slice(0);
-    } else {
-      indices = new sourceValues.constructor(sourceValues);
-    }
+    indices = cloneValues(geometry.indices);
   }
 
   return new Geometry({
@@ -1278,6 +1275,7 @@ function loadAsynchronous(primitive, frameState) {
           projection: projection,
           elementIndexUintSupported: frameState.context.elementIndexUint,
           scene3DOnly: scene3DOnly,
+          columbusRepeatWorlds: frameState.columbusRepeatWorlds === true,
           vertexCacheOptimize: primitive.vertexCacheOptimize,
           compressVertices: primitive.compressVertices,
           modelMatrix: primitive.modelMatrix,
@@ -1360,6 +1358,7 @@ function loadSynchronous(primitive, frameState) {
     projection: projection,
     elementIndexUintSupported: frameState.context.elementIndexUint,
     scene3DOnly: scene3DOnly,
+    columbusRepeatWorlds: frameState.columbusRepeatWorlds === true,
     vertexCacheOptimize: primitive.vertexCacheOptimize,
     compressVertices: primitive.compressVertices,
     modelMatrix: primitive.modelMatrix,

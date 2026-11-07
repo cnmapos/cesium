@@ -104,11 +104,24 @@ void main()
 
 #ifdef WIDTH_VARYING
     float width = czm_batchTable_width(batchId);
+    // HZ patch: negative batch width encodes metric sizing (world meters).
+    if (width < 0.0)
+    {
+        vec4 metricPosEC = czm_modelViewRelativeToEye * czm_translateRelativeToEye(position3DHigh, position3DLow);
+        width = clamp((-width) / czm_metersPerPixel(metricPosEC), 1.0, 4096.0);
+    }
     float halfWidth = width * 0.5;
     v_width = width;
     v_texcoordNormalizationAndHalfWidth.z = halfWidth;
 #else
-    float halfWidth = 0.5 * czm_batchTable_width(batchId);
+    float width = czm_batchTable_width(batchId);
+    // HZ patch: negative batch width encodes metric sizing (world meters).
+    if (width < 0.0)
+    {
+        vec4 metricPosEC = czm_modelViewRelativeToEye * czm_translateRelativeToEye(position3DHigh, position3DLow);
+        width = clamp((-width) / czm_metersPerPixel(metricPosEC), 1.0, 4096.0);
+    }
+    float halfWidth = width * 0.5;
     v_texcoordNormalizationAndHalfWidth.z = halfWidth;
 #endif
 

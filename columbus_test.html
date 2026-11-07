@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #101010;
+      }
+      #globe {
+        position: absolute;
+        inset: 0;
+      }
+    </style>
+    <script src="../Build/CesiumUnminified/Cesium.js"></script>
+  </head>
+  <body>
+    <div id="globe"></div>
+    <script>
+      /* global Cesium */
+      (async () => {
+        const params = new URLSearchParams(location.search);
+        const lon = parseFloat(params.get("lon") ?? "180");
+        const lat = parseFloat(params.get("lat") ?? "10");
+        const height = parseFloat(params.get("h") ?? "2500000");
+        const repeat = params.get("repeat") !== "0";
+        const clamp = params.get("clamp") === "1";
+        const imagery = await Cesium.TileMapServiceImageryProvider.fromUrl(
+          Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII"),
+        );
+        await new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r)),
+        );
+        const widget = new Cesium.CesiumWidget("globe", {
+          baseLayer: new Cesium.ImageryLayer(imagery),
+          scene3DOnly: false,
+        });
+        widget.resize();
+        const el = document.getElementById("globe");
+        widget.canvas.width = el.clientWidth;
+        widget.canvas.height = el.clientHeight;
+        widget.resize();
+        const scene = widget.scene;
+        scene.columbusRepeatWorlds = repeat;
+        scene.mode = Cesium.SceneMode.COLUMBUS_VIEW;
+        scene.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+        });
+        // Test entities: two lines 170->190 at different latitudes
+        const ds = new Cesium.CustomDataSource("test");
+        ds.entities.add({
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray([170, 5, 190, 5]),
+            width: 6,
+            material: Cesium.Color.RED,
+            arcType: Cesium.ArcType.RHUMB,
+            clampToGround: clamp,
+          },
+        });
+        ds.entities.add({
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray([170, 15, 190, 15]),
+            width: 6,
+            material: Cesium.Color.LIME,
+            arcType: Cesium.ArcType.GEODESIC,
+            clampToGround: clamp,
+          },
+        });
+        widget.dataSources.add(ds);
+        window.__ready = true;
+        window.__widget = widget;
+        window.__state = function () {
+          const c = scene.camera;
+          return {
+            mode: scene.mode,
+            repeat: scene.columbusRepeatWorlds,
+            posWC: c.positionWC.toString(),
+          };
+        };
+      })();
+    </script>
+  </body>
+</html>

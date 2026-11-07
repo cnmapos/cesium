@@ -20,6 +20,7 @@ import GlobeFS from "../Shaders/GlobeFS.js";
 import GlobeVS from "../Shaders/GlobeVS.js";
 import AtmosphereCommon from "../Shaders/AtmosphereCommon.js";
 import GroundAtmosphere from "../Shaders/GroundAtmosphere.js";
+import ColumbusWorlds from "./ColumbusWorlds.js";
 import GlobeSurfaceShaderSet from "./GlobeSurfaceShaderSet.js";
 import GlobeSurfaceTileProvider from "./GlobeSurfaceTileProvider.js";
 import GlobeTranslucency from "./GlobeTranslucency.js";
@@ -103,6 +104,60 @@ function Globe(ellipsoid) {
    * @default 2
    */
   this.maximumScreenSpaceError = 2;
+
+  /**
+   * Gets or sets the uniform level-of-detail mode configuration. When enabled,
+   * tile refinement is evaluated against a single per-frame reference distance
+   * instead of each tile's own distance to the camera, so the tiles in view
+   * converge on one LOD level instead of a distance-dependent mix of levels.
+   * This eliminates visible cross-level seams (e.g. between differently-styled
+   * imagery levels) at the cost of loading more tiles in tilted views.
+   *
+   * The object has the following fields:
+   * <ul>
+   *   <li><code>enabled</code>: set to <code>true</code> to activate the mode.</li>
+   *   <li><code>reference</code>: which distance all tiles are evaluated against.
+   *       <code>"center"</code> (default) uses the distance from the camera to the
+   *       globe along the center of the view; <code>"nearest"</code> uses the
+   *       nearest visible tile distance from the previous frame, which selects
+   *       the highest detail level in view (more tiles).</li>
+   *   <li><code>maxDeviationLevels</code>: caps how many levels above the natural
+   *       LOD far tiles may be forced to refine (default <code>3</code>). Each
+   *       allowed level roughly quadruples the extra tile count toward the
+   *       horizon; lower values are cheaper, higher values are more uniform.</li>
+   *   <li><code>maxCoarsenLevels</code>: caps how many levels below the natural
+   *       LOD near (foreground) tiles may be held back (default <code>1</code>).
+   *       Uncapped, the foreground of a tilted far view lands 2+ levels coarser
+   *       than natural, and <code>verticalExaggeration &gt; 1</code> multiplies
+   *       the interpolation error of coarse terrain (1 level = 4x, 2 levels =
+   *       16x) into visible tearing. <code>1</code> measures +0~4% tile
+   *       requests over uncapped; <code>0</code> makes the foreground fully
+   *       natural (+5~69% requests) but mixes near/far levels again, bringing
+   *       back the dataset's cross-level color bands.</li>
+   *   <li><code>pitchRangeDegrees</code>: a <code>[full, none]</code> pair of pitch
+   *       angles in degrees (e.g. <code>[-50, -25]</code>) between which the effect
+   *       fades out as the view approaches the horizon. Leave undefined or pass
+   *       <code>null</code> to keep it fully engaged regardless of pitch, which is
+   *       appropriate for offline rendering.</li>
+   * </ul>
+   * Applies in {@link SceneMode.SCENE3D} and {@link SceneMode.COLUMBUS_VIEW};
+   * true 2D ({@link SceneMode.SCENE2D}) already uses distance-independent
+   * screen-space error and is unaffected.
+   *
+   * @type {object|undefined}
+   * @default undefined
+   *
+   * @example
+   * // Offline video export: full uniformity, no pitch gating
+   * globe.uniformLevelMode = {
+   *   enabled: true,
+   *   reference: "center",
+   *   maxDeviationLevels: 4,
+   *   maxCoarsenLevels: 1,
+   *   pitchRangeDegrees: null,
+   * };
+   */
+  this.uniformLevelMode = undefined;
 
   /**
    * The size of the terrain tile cache, expressed as a number of tiles.  Any additional
@@ -690,17 +745,19 @@ function makeShadersDirty(globe) {
 
 function createComparePickTileFunction(rayOrigin) {
   return function (a, b) {
-    const aDist = BoundingSphere.distanceSquaredTo(
-      a.pickBoundingSphere,
-      rayOrigin,
-    );
-    const bDist = BoundingSphere.distanceSquaredTo(
-      b.pickBoundingSphere,
-      rayOrigin,
-    );
+    const aDist = BoundingSphere.distanceSquaredTo(a.sphere, rayOrigin);
+    const bDist = BoundingSphere.distanceSquaredTo(b.sphere, rayOrigin);
 
     return aDist - bDist;
   };
+}
+
+// Columbus repeat worlds: how many translated world copies to test on either
+// side of the pick ray's own world when repeat worlds are enabled.
+const GLOBE_COLUMBUS_MAX_EXTRA_WORLDS = 2;
+
+function getGlobeColumbusWorldWidth(projection) {
+  return ColumbusWorlds.getWorldWidth(projection);
 }
 
 const scratchArray = [];
@@ -708,6 +765,8 @@ const scratchSphereIntersectionResult = {
   start: 0.0,
   stop: 0.0,
 };
+const scratchPickOffsetSphere = new BoundingSphere();
+const scratchColumbusPickRay = new Ray();
 
 /**
  * Find an intersection between a ray and the globe surface that was rendered. The ray must be given in world coordinates.
@@ -739,6 +798,12 @@ Globe.prototype.pickWorldCoordinates = function (
 
   const mode = scene.mode;
   const projection = scene.mapProjection;
+
+  const repeatWorlds =
+    scene.columbusRepeatWorlds === true && mode === SceneMode.COLUMBUS_VIEW;
+  const worldWidth = repeatWorlds
+    ? getGlobeColumbusWorldWidth(projection)
+    : 0.0;
 
   const sphereIntersections = scratchArray;
   sphereIntersections.length = 0;
@@ -776,13 +841,48 @@ Globe.prototype.pickWorldCoordinates = function (
       continue;
     }
 
-    const boundingSphereIntersection = IntersectionTests.raySphere(
-      ray,
-      boundingVolume,
-      scratchSphereIntersectionResult,
-    );
-    if (defined(boundingSphereIntersection)) {
-      sphereIntersections.push(surfaceTile);
+    if (!repeatWorlds) {
+      const boundingSphereIntersection = IntersectionTests.raySphere(
+        ray,
+        boundingVolume,
+        scratchSphereIntersectionResult,
+      );
+      if (defined(boundingSphereIntersection)) {
+        sphereIntersections.push({
+          surfaceTile,
+          sphere: boundingVolume,
+          offset: 0.0,
+        });
+      }
+      continue;
+    }
+
+    // Columbus repeat worlds: a translated copy of this tile may be hit even
+    // when the primary sphere is not. Test the copies around the ray's own
+    // world so points beyond the ±180° meridian pick correctly.
+    const rayWorld = Math.round(ray.origin.y / worldWidth);
+    for (
+      let w = rayWorld - GLOBE_COLUMBUS_MAX_EXTRA_WORLDS;
+      w <= rayWorld + GLOBE_COLUMBUS_MAX_EXTRA_WORLDS;
+      ++w
+    ) {
+      const offset = w * worldWidth;
+      const offsetSphere = scratchPickOffsetSphere;
+      Cartesian3.clone(boundingVolume.center, offsetSphere.center);
+      offsetSphere.center.y += offset;
+      offsetSphere.radius = boundingVolume.radius;
+      const boundingSphereIntersection = IntersectionTests.raySphere(
+        ray,
+        offsetSphere,
+        scratchSphereIntersectionResult,
+      );
+      if (defined(boundingSphereIntersection)) {
+        sphereIntersections.push({
+          surfaceTile,
+          sphere: BoundingSphere.clone(offsetSphere, new BoundingSphere()),
+          offset,
+        });
+      }
     }
   }
 
@@ -791,13 +891,34 @@ Globe.prototype.pickWorldCoordinates = function (
   let intersection;
   const length = sphereIntersections.length;
   for (let i = 0; i < length; ++i) {
-    intersection = sphereIntersections[i].pick(
-      ray,
-      scene.mode,
-      scene.mapProjection,
-      cullBackFaces,
-      result,
-    );
+    const candidate = sphereIntersections[i];
+    const offset = candidate.offset;
+    if (offset === 0.0) {
+      intersection = candidate.surfaceTile.pick(
+        ray,
+        scene.mode,
+        scene.mapProjection,
+        cullBackFaces,
+        result,
+      );
+    } else {
+      // Pick against the copy by shifting the ray into the primary world,
+      // then shifting the hit point back onto the copy.
+      const pickRay = scratchColumbusPickRay;
+      Cartesian3.clone(ray.origin, pickRay.origin);
+      pickRay.origin.y -= offset;
+      Cartesian3.clone(ray.direction, pickRay.direction);
+      intersection = candidate.surfaceTile.pick(
+        pickRay,
+        scene.mode,
+        scene.mapProjection,
+        cullBackFaces,
+        result,
+      );
+      if (defined(intersection)) {
+        intersection.y += offset;
+      }
+    }
     if (defined(intersection)) {
       break;
     }
@@ -1035,6 +1156,7 @@ Globe.prototype.beginFrame = function (frameState) {
     }
 
     surface.maximumScreenSpaceError = this.maximumScreenSpaceError;
+    surface.uniformLevelMode = this.uniformLevelMode;
     surface.tileCacheSize = this.tileCacheSize;
     surface.loadingDescendantLimit = this.loadingDescendantLimit;
     surface.preloadAncestors = this.preloadAncestors;

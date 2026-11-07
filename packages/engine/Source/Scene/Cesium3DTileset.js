@@ -76,6 +76,8 @@ import ImageryLayerCollection from "./ImageryLayerCollection.js";
  * @property {Axis} [modelForwardAxis=Axis.X] Which axis is considered forward when loading models for tile contents.
  * @property {ShadowMode} [shadows=ShadowMode.ENABLED] Determines whether the tileset casts or receives shadows from light sources.
  * @property {number} [maximumScreenSpaceError=16] The maximum screen space error used to drive level of detail refinement.
+ * @property {object} [uniformLevelMode] Evaluates tile refinement against a shared
+ * per-frame reference distance so visible tiles converge on a uniform level.
  * @property {number} [cacheBytes=536870912] The size (in bytes) to which the tile cache will be trimmed, if the cache contains tiles not needed for the current view.
  * @property {number} [maximumCacheOverflowBytes=536870912] The maximum additional memory (in bytes) to allow for cache headroom, if more than {@link Cesium3DTileset#cacheBytes} are needed for the current view.
  * @property {boolean} [cullWithChildrenBounds=true] Optimization option. Whether to cull tiles using the union of their children bounding volumes.
@@ -245,6 +247,17 @@ function Cesium3DTileset(options) {
 
   this._maximumScreenSpaceError = options.maximumScreenSpaceError ?? 16;
   this._memoryAdjustedScreenSpaceError = this._maximumScreenSpaceError;
+  this._uniformLevelMode = options.uniformLevelMode;
+  this._uniformLevelState = {
+    active: false,
+    engage: 0.0,
+    referenceDistance: undefined,
+    deviationFactor: 8.0,
+    coarsenFactor: 2.0,
+  };
+  this._nearestTileDistanceThisFrame = undefined;
+  this._nearestTileDistanceLastFrame = undefined;
+  this._uniformLevelFrameNumber = -1;
 
   this._cacheBytes = options.cacheBytes ?? 512 * 1024 * 1024;
   //>>includeStart('debug', pragmas.debug);
@@ -1563,6 +1576,27 @@ Object.defineProperties(Cesium3DTileset.prototype, {
 
       this._maximumScreenSpaceError = value;
       this._memoryAdjustedScreenSpaceError = value;
+    },
+  },
+
+  /**
+   * Uniform level-of-detail configuration. When enabled, perspective screen-space
+   * error is blended toward the error at a single reference distance, preventing
+   * visible tiles at different distances from selecting different levels solely
+   * because of distance.
+   *
+   * @memberof Cesium3DTileset.prototype
+   *
+   * @type {object|undefined}
+   */
+  uniformLevelMode: {
+    get: function () {
+      return this._uniformLevelMode;
+    },
+    set: function (value) {
+      this._uniformLevelMode = value;
+      this._uniformLevelState.active = false;
+      this._uniformLevelState.referenceDistance = undefined;
     },
   },
 
@@ -2975,6 +3009,115 @@ function decreaseScreenSpaceError(tileset) {
   );
 }
 
+const uniformLevelScratchUp = new Cartesian3();
+const uniformLevelScratchRay = new Ray();
+
+/**
+ * Compute the shared reference distance and engagement used by uniform-level SSE.
+ * @private
+ * @param {Cesium3DTileset} tileset
+ * @param {FrameState} frameState
+ */
+function updateUniformLevelState(tileset, frameState) {
+  const state = tileset._uniformLevelState;
+  if (tileset._uniformLevelFrameNumber !== frameState.frameNumber) {
+    tileset._uniformLevelFrameNumber = frameState.frameNumber;
+    tileset._nearestTileDistanceLastFrame =
+      tileset._nearestTileDistanceThisFrame;
+    tileset._nearestTileDistanceThisFrame = undefined;
+  }
+  state.active = false;
+
+  const mode = tileset._uniformLevelMode;
+  if (!defined(mode) || mode.enabled !== true) {
+    state.referenceDistance = undefined;
+    return;
+  }
+
+  const camera = frameState.camera;
+  const alignment = CesiumMath.clamp(
+    -Cartesian3.dot(
+      Cartesian3.normalize(camera.positionWC, uniformLevelScratchUp),
+      camera.directionWC,
+    ),
+    0.0,
+    1.0,
+  );
+
+  let engage = 1.0;
+  const pitchRange = mode.pitchRangeDegrees;
+  if (defined(pitchRange) && pitchRange !== null) {
+    const fullAlignment = Math.sin(
+      CesiumMath.toRadians(Math.abs(pitchRange[0])),
+    );
+    const noneAlignment = Math.sin(
+      CesiumMath.toRadians(Math.abs(pitchRange[1])),
+    );
+    const alignmentRange = Math.max(fullAlignment - noneAlignment, 1e-6);
+    let interpolation = (alignment - noneAlignment) / alignmentRange;
+    interpolation = CesiumMath.clamp(interpolation, 0.0, 1.0);
+    engage = interpolation * interpolation * (3.0 - 2.0 * interpolation);
+  }
+  if (engage <= 0.0) {
+    return;
+  }
+
+  let referenceDistance;
+  const nearestDistance = tileset._nearestTileDistanceLastFrame;
+  if (mode.reference === "nearest") {
+    referenceDistance = nearestDistance;
+  } else if (frameState.mode === SceneMode.COLUMBUS_VIEW) {
+    const directionX = camera.directionWC.x;
+    if (directionX !== 0.0) {
+      const scalar = -camera.positionWC.x / directionX;
+      referenceDistance = scalar > 0.0 ? scalar : undefined;
+    }
+  } else {
+    Cartesian3.clone(camera.positionWC, uniformLevelScratchRay.origin);
+    Cartesian3.clone(camera.directionWC, uniformLevelScratchRay.direction);
+    const intersection = IntersectionTests.rayEllipsoid(
+      uniformLevelScratchRay,
+      tileset.ellipsoid,
+    );
+    referenceDistance = defined(intersection) ? intersection.start : undefined;
+  }
+
+  if (!defined(referenceDistance) && defined(nearestDistance)) {
+    referenceDistance = nearestDistance;
+  }
+  if (
+    defined(referenceDistance) &&
+    defined(nearestDistance) &&
+    nearestDistance > 0.0
+  ) {
+    referenceDistance = Math.min(referenceDistance, 8.0 * nearestDistance);
+  }
+  if (!defined(referenceDistance) || referenceDistance <= 0.0) {
+    return;
+  }
+
+  const previous = state.referenceDistance;
+  if (defined(previous) && previous > 0.0) {
+    const ratio = referenceDistance / previous;
+    if (ratio >= 0.5 && ratio <= 2.0) {
+      referenceDistance = previous + 0.25 * (referenceDistance - previous);
+    }
+  }
+
+  const maxDeviationLevels = CesiumMath.clamp(
+    mode.maxDeviationLevels ?? 3,
+    0,
+    10,
+  );
+  const maxCoarsenLevels = CesiumMath.clamp(mode.maxCoarsenLevels ?? 1, 0, 10);
+
+  state.referenceDistance = referenceDistance;
+  state.engage = engage;
+  state.deviationFactor = 2 ** maxDeviationLevels;
+  state.coarsenFactor = 2 ** maxCoarsenLevels;
+  state.active = true;
+}
+
 const scratchCartesian = new Cartesian3();
 
 const stringOptions = {
@@ -3452,6 +3595,8 @@ function update(tileset, frameState, passStatistics, passOptions) {
 
   // Update any tracked min max values
   resetMinimumMaximum(tileset);
+
+  updateUniformLevelState(tileset, frameState);
 
   detectModelMatrixChanged(tileset, frameState);
   tileset._cullRequestsWhileMoving =

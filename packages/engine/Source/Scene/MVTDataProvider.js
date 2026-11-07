@@ -41,6 +41,12 @@ import defined from "../Core/defined.js";
  * @property {boolean} [renderGeometry]
  * @property {"mvt"|"geovis"} [format]
  * @property {number} [maximumScreenSpaceError]
+ * @property {boolean} [adaptiveScreenSpaceError] Enables a camera-height-based
+ * screen-space-error schedule. The caller owns tile-service suitability.
+ * @property {object} [uniformLevelMode] Configuration forwarded to the backing
+ * Cesium3DTileset for uniform-level traversal.
+ * @property {boolean} [inheritGlobeUniformLevelMode=false] Keeps the tileset's
+ * uniform-level configuration synchronized with scene.globe.
  * @property {number} [maximumConcurrentRequests]
  * @property {number} [cacheBytes]
  * @property {number} [maximumCacheOverflowBytes]
@@ -72,7 +78,7 @@ const labelOnlyMaximumCacheOverflowBytes = 16 * 1024 * 1024;
 class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
   /** @param {Resource|string} urlTemplate @param {MVTProviderOptions} [options] */
   constructor(urlTemplate, options) {
-    options = normalizeMvtOptions(options);
+    options = options ?? {};
     super(urlTemplate, options);
     this._labelStyles = options.labelStyles ?? [];
     this._labelHeightReference =
@@ -100,8 +106,12 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
       (this._renderGeometry ? undefined : labelOnlyMaximumCacheOverflowBytes);
     this._format = options.format ?? "mvt";
     this._maximumScreenSpaceError = options.maximumScreenSpaceError;
+    this._uniformLevelMode = options.uniformLevelMode;
+    this._inheritGlobeUniformLevelMode =
+      options.inheritGlobeUniformLevelMode === true;
     this._usesAdaptiveScreenSpaceError =
-      this._format === "geovis" && !defined(this._maximumScreenSpaceError);
+      options.adaptiveScreenSpaceError === true &&
+      !defined(this._maximumScreenSpaceError);
     this._maximumConcurrentRequests = options.maximumConcurrentRequests ?? 12;
     this._scene = options.scene;
     this._labelManager = undefined;
@@ -113,7 +123,7 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @param {Resource|string} url URL template, containing {z}, {x}, and {y} placeholders.
    * @param {object} [options] Provider options.
    * @param {number} [options.minZoom=0] Minimum zoom level represented in the generated tileset.
-   * @param {number} [options.maxZoom] Maximum zoom level represented in the generated tileset. GeoVis defaults to 18 and is limited to 18 because its label API returns empty tiles above that level.
+   * @param {number} [options.maxZoom] Maximum zoom level represented in the generated tileset.
    * @param {Rectangle} [options.extent] Optional geographic extent in radians to constrain the generated tile tree.
    * @param {string} [options.featureIdProperty] MVT property name to use as feature ID.
    * @param {object[]} [options.labelStyles] Declarative MVT text-symbol rules.
@@ -127,8 +137,9 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @param {number} [options.glyphReclaimMargin] Minimum number of unreferenced glyphs required before the atlas is rebuilt. Defaults to a quarter of `maximumCachedGlyphs`. A rebuild that would reclaim less than this is skipped, since it would discard and immediately re-rasterize the same glyphs.
    * @param {number} [options.maximumVisibleLabels=1000] Maximum labels shown in one frame. Lower-priority labels are dropped, which keeps the set of live glyphs inside the atlas budget.
    * @param {boolean} [options.renderGeometry=true] Render point, line, and polygon geometry in addition to labels.
-   * @param {"mvt"|"geovis"} [options.format="mvt"] PBF schema used by the tile service. Use `geovis` for GeoVis vector APIs.
-   * @param {number} [options.maximumScreenSpaceError] Tile screen-space error. When omitted for GeoVis, it adapts from 16 at globe scale to 1 near street scale.
+   * @param {"mvt"|"geovis"} [options.format="mvt"] PBF schema used by the tile service.
+   * @param {number} [options.maximumScreenSpaceError] Tile screen-space error.
+   * @param {boolean} [options.adaptiveScreenSpaceError=false] Adapt screen-space error from 16 at globe scale to 1 near street scale.
    * @param {number} [options.maximumConcurrentRequests=12] Maximum pending MVT tile network requests. Limits the initial global-tile burst without requiring an extent.
    * @param {number} [options.cacheBytes=67108864] Target tile cache size for labels-only providers. Geometry providers keep the Cesium3DTileset default unless configured.
    * @param {number} [options.maximumCacheOverflowBytes=16777216] Additional cache headroom for labels-only providers. Geometry providers keep the Cesium3DTileset default unless configured.
@@ -153,13 +164,14 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
     const options = {
       // Progressive traversal keeps an available lower-level label tile visible
       // while a sharper child tile is loading. Immediate LOD skipping can select
-      // an empty GeoVis child tile and leave the screen without text.
+      // an empty child tile and leave the screen without text.
       skipLevelOfDetail: false,
       maximumSimultaneousTileRequests: this._maximumConcurrentRequests,
       enablePick: true,
       featureIdLabel: "featureId_0",
       instanceFeatureIdLabel: "instanceFeatureId_0",
       scene: this._scene,
+      uniformLevelMode: this._uniformLevelMode,
     };
     if (defined(this._cacheBytes)) {
       options.cacheBytes = this._cacheBytes;
@@ -278,9 +290,22 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @protected
    */
   update(frameState) {
+    const scene = /** @type {{ globe?: { uniformLevelMode?: object } }} */ (
+      this._scene
+    );
+    const tileset = /** @type {{ uniformLevelMode?: object }} */ (
+      this._tileset
+    );
+    if (
+      this._inheritGlobeUniformLevelMode &&
+      defined(tileset) &&
+      defined(scene?.globe)
+    ) {
+      tileset.uniformLevelMode = scene.globe.uniformLevelMode;
+    }
     if (this._usesAdaptiveScreenSpaceError && defined(this._tileset)) {
       /** @type {*} */ (this._tileset).maximumScreenSpaceError =
-        getGeoVisScreenSpaceError(
+        getAdaptiveScreenSpaceError(
           frameState.camera.positionCartographic?.height,
         );
     }
@@ -445,7 +470,7 @@ class MvtLabel3DTileContent {
 }
 
 /** @param {number|undefined} height */
-function getGeoVisScreenSpaceError(height) {
+function getAdaptiveScreenSpaceError(height) {
   if (!Number.isFinite(height) || height > 3000000.0) {
     return 16.0;
   }
@@ -459,18 +484,6 @@ function getGeoVisScreenSpaceError(height) {
     return 4.0;
   }
   return 1.0;
-}
-
-/** @param {MVTProviderOptions|undefined} options @returns {MVTProviderOptions} */
-function normalizeMvtOptions(options) {
-  const normalized = options ?? {};
-  if (normalized.format !== "geovis") {
-    return normalized;
-  }
-  return {
-    ...normalized,
-    maxZoom: Math.min(normalized.maxZoom ?? 18, 18),
-  };
 }
 
 /** @param {*} parameters @returns {Promise<MVTWorkerResult>} */

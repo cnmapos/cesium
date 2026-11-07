@@ -292,33 +292,31 @@ void main()
     v_compressed.y = enableDepthCheck;
 
 #ifdef VS_THREE_POINT_DEPTH_CHECK
+const float anchorTerrainDepthDistance = 100000.0;
 if (lengthSq < (u_threePointDepthTestDistance * u_threePointDepthTestDistance) && (enableDepthCheck == 1.0)) {
-    float depthsilon = 10.0;
-    vec2 depthOrigin;
-    // Horizontal origin for labels comes from a special attribute. If that value is 0, this is a billboard - use the regular origin.
-    // Otherwise, transform the label origin to -1, 0, 1 (right, center, left).
-    depthOrigin.x = floor(compressedAttribute2.w - (temp2 * SHIFT_LEFT2));
-    depthOrigin.x = czm_branchFreeTernary(depthOrigin.x == 0.0, origin.x, depthOrigin.x - 2.0);
-    depthOrigin.y = origin.y;
-
-    vec4 pEC1 = addScreenSpaceOffset(positionEC, dimensions, scale, vec2(0.0), depthOrigin, vec2(0.0), pixelOffset, alignedAxis, validAlignedAxis, rotation, sizeInMeters, rotationMatrix, mpp);
-    float globeDepth1 = getGlobeDepth(pEC1);
-
-    if (globeDepth1 != 0.0 && pEC1.z + depthsilon < globeDepth1)
+    // Resolve an entire label from its anchor. Sampling the corners of each
+    // glyph makes labels near the horizon flip between visible and occluded as
+    // individual samples cross the globe-depth boundary between frames.
+    float depthsilon = 1000.0;
+    bool occluded;
+    if (lengthSq > anchorTerrainDepthDistance * anchorTerrainDepthDistance)
     {
-        vec4 pEC2 = addScreenSpaceOffset(positionEC, dimensions, scale, vec2(0.0, 1.0), depthOrigin, vec2(0.0), pixelOffset, alignedAxis, validAlignedAxis, rotation, sizeInMeters, rotationMatrix, mpp);
-        float globeDepth2 = getGlobeDepth(pEC2);
-
-        if (globeDepth2 != 0.0 && pEC2.z + depthsilon < globeDepth2)
-        {
-            vec4 pEC3 = addScreenSpaceOffset(positionEC, dimensions, scale, vec2(1.0), depthOrigin, vec2(0.0), pixelOffset, alignedAxis, validAlignedAxis, rotation, sizeInMeters, rotationMatrix, mpp);
-            float globeDepth3 = getGlobeDepth(pEC3);
-            if (globeDepth3 != 0.0 && pEC3.z + depthsilon < globeDepth3)
-            {
-                // "Discard" this vertex, as three key points fail depth test.
-                positionEC.xyz = vec3(0.0);
-            }
-        }
+        // The depth texture is updated by tiled globe geometry and can make
+        // labels near the horizon flip between frames at long range. Use the
+        // deterministic ellipsoid horizon there, while retaining terrain-depth
+        // occlusion for closer labels.
+        occluded = !czm_isEmpty(intersection) &&
+            positionEC.z + depthsilon < -intersection.start;
+    }
+    else
+    {
+        float globeDepth = getGlobeDepth(positionEC);
+        occluded = globeDepth != 0.0 &&
+            positionEC.z + depthsilon < globeDepth;
+    }
+    if (occluded)
+    {
+        positionEC.xyz = vec3(0.0);
     }
 }
 #endif

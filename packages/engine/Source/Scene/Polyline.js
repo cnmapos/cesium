@@ -34,6 +34,20 @@ import Material from "./Material.js";
  * @see PolylineCollection
  *
  */
+function makePolylineSegments(polyline, modelMatrix, columbusRepeatWorlds) {
+  if (columbusRepeatWorlds) {
+    // Columbus repeat worlds: keep the polyline continuous through the
+    // ±180° meridian instead of splitting it at the IDL.
+    // PolylineCollection's getSegments lifts the projected positions onto
+    // adjacent world copies so the line draws through the seam.
+    return {
+      positions: polyline._actualPositions,
+      lengths: [polyline._actualPositions.length],
+    };
+  }
+  return PolylinePipeline.wrapLongitude(polyline._actualPositions, modelMatrix);
+}
+
 function Polyline(options, polylineCollection) {
   options = options ?? Frozen.EMPTY_OBJECT;
 
@@ -76,9 +90,13 @@ function Polyline(options, polylineCollection) {
   }
 
   this._modelMatrix = modelMatrix;
-  this._segments = PolylinePipeline.wrapLongitude(
-    this._actualPositions,
+  this._columbusRepeatWorlds =
+    defined(polylineCollection) &&
+    polylineCollection._columbusRepeatWorlds === true;
+  this._segments = makePolylineSegments(
+    this,
     modelMatrix,
+    this._columbusRepeatWorlds,
   );
 
   this._actualLength = undefined;
@@ -371,10 +389,19 @@ Polyline.prototype.update = function () {
   const positionsChanged =
     this._propertiesChanged[POSITION_INDEX] > 0 ||
     this._propertiesChanged[POSITION_SIZE_INDEX] > 0;
-  if (!Matrix4.equals(modelMatrix, this._modelMatrix) || positionsChanged) {
-    this._segments = PolylinePipeline.wrapLongitude(
-      this._actualPositions,
+  const columbusRepeatWorlds =
+    defined(this._polylineCollection) &&
+    this._polylineCollection._columbusRepeatWorlds === true;
+  if (
+    !Matrix4.equals(modelMatrix, this._modelMatrix) ||
+    positionsChanged ||
+    columbusRepeatWorlds !== this._columbusRepeatWorlds
+  ) {
+    this._columbusRepeatWorlds = columbusRepeatWorlds;
+    this._segments = makePolylineSegments(
+      this,
       modelMatrix,
+      columbusRepeatWorlds,
     );
     this._boundingVolumeWC = BoundingSphere.transform(
       this._boundingVolume,

@@ -133,6 +133,10 @@ function GroundPolylineGeometry(options) {
   // Used by GroundPolylinePrimitive to signal worker that scenemode is 3D only.
   this._scene3DOnly = false;
 
+  // Used by GroundPolylinePrimitive to signal that Columbus View repeats the
+  // map in whole-world copies, so the 2D shadow volumes must stay on one copy.
+  this._columbusRepeatWorlds = false;
+
   /**
    * @private
    */
@@ -164,6 +168,7 @@ Object.defineProperties(GroundPolylineGeometry.prototype, {
         1.0 +
         1.0 +
         1.0 +
+        1.0 +
         1.0
       );
     },
@@ -176,11 +181,13 @@ Object.defineProperties(GroundPolylineGeometry.prototype, {
  *
  * @param {GroundPolylineGeometry} groundPolylineGeometry GroundPolylinGeometry describing a polyline on terrain or 3D Tiles.
  * @param {Projection} mapProjection A MapProjection used for projecting cartographic coordinates to 2D.
+ * @param {boolean} [columbusRepeatWorlds=false] True when Columbus View repeats the map in whole-world copies.
  * @private
  */
 GroundPolylineGeometry.setProjectionAndEllipsoid = function (
   groundPolylineGeometry,
   mapProjection,
+  columbusRepeatWorlds,
 ) {
   let projectionIndex = 0;
   for (let i = 0; i < PROJECTION_COUNT; i++) {
@@ -192,6 +199,7 @@ GroundPolylineGeometry.setProjectionAndEllipsoid = function (
 
   groundPolylineGeometry._projectionIndex = projectionIndex;
   groundPolylineGeometry._ellipsoid = mapProjection.ellipsoid;
+  groundPolylineGeometry._columbusRepeatWorlds = columbusRepeatWorlds === true;
 };
 
 const cart3Scratch1 = new Cartesian3();
@@ -336,6 +344,7 @@ GroundPolylineGeometry.pack = function (value, array, startingIndex) {
   array[index++] = value._scene3DOnly ? 1.0 : 0.0;
   array[index++] = value._verticalExaggeration;
   array[index++] = value._verticalExaggerationRelativeHeight;
+  array[index] = value._columbusRepeatWorlds ? 1.0 : 0.0;
 
   return array;
 };
@@ -372,6 +381,7 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
   const scene3DOnly = array[index++] === 1.0;
   const verticalExaggeration = array[index++];
   const verticalExaggerationRelativeHeight = array[index++];
+  const columbusRepeatWorlds = array[index] === 1.0;
 
   if (!defined(result)) {
     result = new GroundPolylineGeometry({
@@ -389,6 +399,7 @@ GroundPolylineGeometry.unpack = function (array, startingIndex, result) {
   result._verticalExaggeration = verticalExaggeration;
   result._verticalExaggerationRelativeHeight =
     verticalExaggerationRelativeHeight;
+  result._columbusRepeatWorlds = columbusRepeatWorlds;
 
   return result;
 };
@@ -818,6 +829,7 @@ GroundPolylineGeometry.createGeometry = function (groundPolylineGeometry) {
     compute2dAttributes,
     groundPolylineGeometry._verticalExaggeration,
     groundPolylineGeometry._verticalExaggerationRelativeHeight,
+    groundPolylineGeometry._columbusRepeatWorlds,
   );
 };
 
@@ -993,6 +1005,55 @@ function nudgeCartographic(start, end) {
 const startCartographicScratch = new Cartographic();
 const endCartographicScratch = new Cartographic();
 
+const worldWidthCartographicScratch = new Cartographic(Math.PI, 0.0, 0.0);
+const worldWidthCartesianScratch = new Cartesian3();
+
+// Projected width of one full world (360° of longitude) for the projection.
+function getProjectedWorldWidth(projection) {
+  const projected = projection.project(
+    worldWidthCartographicScratch,
+    worldWidthCartesianScratch,
+  );
+  return Math.abs(projected.x) * 2.0;
+}
+
+// Per-geometry state for keeping consecutive 2D segments on one world copy.
+function createWorldCopyState(worldWidth) {
+  return {
+    worldWidth: worldWidth,
+    halfWidth: worldWidth * 0.5,
+    lift: 0.0,
+    previousEndX: 0.0,
+    started: false,
+  };
+}
+
+// Shifts a projected 2D segment onto the world copy of the previous segment,
+// accumulating the shift for every following segment. No-op outside Columbus
+// repeat-worlds mode.
+function liftToWorldCopy2D(start2D, end2D, state) {
+  if (state.worldWidth <= 0.0) {
+    return;
+  }
+
+  const startX = start2D.x;
+  const endX = end2D.x;
+
+  if (state.started) {
+    const jump = startX - state.previousEndX;
+    if (jump > state.halfWidth) {
+      state.lift -= state.worldWidth;
+    } else if (jump < -state.halfWidth) {
+      state.lift += state.worldWidth;
+    }
+  }
+
+  start2D.x = startX + state.lift;
+  end2D.x = endX + state.lift;
+  state.previousEndX = endX;
+  state.started = true;
+}
+
 const segmentStartTopScratch = new Cartesian3();
 const segmentEndTopScratch = new Cartesian3();
 const segmentStartBottomScratch = new Cartesian3();
@@ -1015,6 +1076,8 @@ const segmentStart2DScratch = new Cartesian3();
 const segmentEnd2DScratch = new Cartesian3();
 const segmentStartNormal2DScratch = new Cartesian3();
 const segmentEndNormal2DScratch = new Cartesian3();
+const segmentStart2DUnliftedScratch = new Cartesian3();
+const segmentEnd2DUnliftedScratch = new Cartesian3();
 
 const offsetScratch = new Cartesian3();
 const startUpScratch = new Cartesian3();
@@ -1087,6 +1150,7 @@ function generateGeometryAttributes(
   compute2dAttributes,
   verticalExaggeration,
   verticalExaggerationRelativeHeight,
+  columbusRepeatWorlds,
 ) {
   let i;
   let index;
@@ -1126,6 +1190,14 @@ function generateGeometryAttributes(
     texcoordNormalization2D = new Float32Array(vertexCount * 2);
   }
 
+  // In Columbus repeat-worlds mode the 2D shadow volumes are kept on a single
+  // world copy: a line crossing the antimeridian is split there, and the two
+  // halves would otherwise project a full world width apart, so the shadow
+  // volume of the seam segment spans the whole map.
+  const worldWidth = columbusRepeatWorlds
+    ? getProjectedWorldWidth(projection)
+    : 0.0;
+
   /*** Compute total lengths for texture coordinate normalization ***/
   // 2D
   const cartographicsLength = cartographicsArray.length / 2;
@@ -1141,6 +1213,7 @@ function generateGeometryAttributes(
 
   if (compute2dAttributes) {
     index = 0;
+    const worldCopyState = createWorldCopyState(worldWidth);
     for (i = 1; i < cartographicsLength; i++) {
       // Don't clone anything from previous segment b/c possible IDL touch
       startCartographic.latitude = cartographicsArray[index];
@@ -1148,6 +1221,9 @@ function generateGeometryAttributes(
       endCartographic.latitude = cartographicsArray[index + 2];
       endCartographic.longitude = cartographicsArray[index + 3];
 
+      if (worldWidth > 0.0) {
+        nudgeCartographic(startCartographic, endCartographic);
+      }
       segmentStartCartesian = projection.project(
         startCartographic,
         segmentStartCartesian,
@@ -1155,6 +1231,11 @@ function generateGeometryAttributes(
       segmentEndCartesian = projection.project(
         endCartographic,
         segmentEndCartesian,
+      );
+      liftToWorldCopy2D(
+        segmentStartCartesian,
+        segmentEndCartesian,
+        worldCopyState,
       );
       length2D += Cartesian3.distance(
         segmentStartCartesian,
@@ -1230,6 +1311,8 @@ function generateGeometryAttributes(
   // For translating bounding volume
   let sumHeights = 0.0;
 
+  const worldCopyState = createWorldCopyState(worldWidth);
+
   for (i = 0; i < segmentCount; i++) {
     const startBottom = Cartesian3.clone(endBottom, segmentStartBottomScratch);
     const startTop = Cartesian3.clone(endTop, segmentStartTopScratch);
@@ -1266,6 +1349,8 @@ function generateGeometryAttributes(
     endCartographic.longitude = cartographicsArray[cartographicsIndex + 3];
     let start2D;
     let end2D;
+    let start2DUnlifted;
+    let end2DUnlifted;
     let startGeometryNormal2D;
     let endGeometryNormal2D;
 
@@ -1273,6 +1358,16 @@ function generateGeometryAttributes(
       const nudgeResult = nudgeCartographic(startCartographic, endCartographic);
       start2D = projection.project(startCartographic, segmentStart2DScratch);
       end2D = projection.project(endCartographic, segmentEnd2DScratch);
+      // projectNormal differentiates against the projected position, so keep
+      // the un-lifted projections for it. A whole world of lift baked into
+      // that position dominates the tangent and yields axis-aligned normals,
+      // which degenerate the shadow volume (NaN eye normal -> nothing drawn).
+      start2DUnlifted = Cartesian3.clone(
+        start2D,
+        segmentStart2DUnliftedScratch,
+      );
+      end2DUnlifted = Cartesian3.clone(end2D, segmentEnd2DUnliftedScratch);
+      liftToWorldCopy2D(start2D, end2D, worldCopyState);
       const direction2D = direction(end2D, start2D, forwardOffset2DScratch);
       direction2D.y = Math.abs(direction2D.y);
 
@@ -1289,14 +1384,14 @@ function generateGeometryAttributes(
           projection,
           startCartographic,
           startGeometryNormal,
-          start2D,
+          start2DUnlifted,
           segmentStartNormal2DScratch,
         );
         endGeometryNormal2D = projectNormal(
           projection,
           endCartographic,
           endGeometryNormal,
-          end2D,
+          end2DUnlifted,
           segmentEndNormal2DScratch,
         );
       } else if (nudgeResult === 1) {
@@ -1305,7 +1400,7 @@ function generateGeometryAttributes(
           projection,
           endCartographic,
           endGeometryNormal,
-          end2D,
+          end2DUnlifted,
           segmentEndNormal2DScratch,
         );
         startGeometryNormal2D.x = 0.0;
@@ -1321,7 +1416,7 @@ function generateGeometryAttributes(
           projection,
           startCartographic,
           startGeometryNormal,
-          start2D,
+          start2DUnlifted,
           segmentStartNormal2DScratch,
         );
         endGeometryNormal2D.x = 0.0;

@@ -21,9 +21,16 @@ PolylinePipeline.numberOfPoints = function (p0, p1, minDistance) {
 };
 
 PolylinePipeline.numberOfPointsRhumbLine = function (p0, p1, granularity) {
+  // Wrap the longitude delta to (-pi, pi]: EllipsoidRhumbLine always
+  // interpolates along the shortest rhumb path. A segment crossing the
+  // +/-180 meridian has a raw delta of nearly 2*pi but spans only a tiny arc;
+  // counting subdivisions from the raw delta over-tessellates that segment by
+  // up to ~360x, which skews index-based parameterizations (the polyline `st`
+  // attribute used by line materials): animations appear to stall at the
+  // antimeridian.
+  const deltaLongitude = CesiumMath.negativePiToPi(p0.longitude - p1.longitude);
   const radiansDistanceSquared =
-    Math.pow(p0.longitude - p1.longitude, 2) +
-    Math.pow(p0.latitude - p1.latitude, 2);
+    Math.pow(deltaLongitude, 2) + Math.pow(p0.latitude - p1.latitude, 2);
 
   return Math.max(
     1,

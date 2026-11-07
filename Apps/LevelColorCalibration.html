@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Level Color Calibration</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+        max-width: 980px;
+      }
+      fieldset {
+        margin-bottom: 14px;
+      }
+      label {
+        display: inline-block;
+        min-width: 150px;
+      }
+      input,
+      select {
+        margin: 2px 0 8px;
+      }
+      #url {
+        width: 640px;
+      }
+      #log {
+        white-space: pre-wrap;
+        background: #f4f4f4;
+        padding: 8px;
+        min-height: 60px;
+      }
+      #statsTable,
+      #profileTable {
+        border-collapse: collapse;
+        margin: 8px 0;
+      }
+      #statsTable td,
+      #statsTable th,
+      #profileTable td,
+      #profileTable th {
+        border: 1px solid #ccc;
+        padding: 3px 10px;
+        text-align: right;
+        font-family: monospace;
+      }
+      #profileJson {
+        width: 100%;
+        height: 220px;
+        font-family: monospace;
+      }
+      .hint {
+        color: #666;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Level Color Calibration</h2>
+    <p class="hint">
+      Samples one geographic area (the anchor tile's rectangle at the base
+      level; finer levels partition it exactly because tile pyramids nest)
+      across imagery levels, computes per-level per-channel mean and standard
+      deviation, and solves one affine color transform per level (<code
+        >R' = scale * R + offset</code
+      >, likewise for G and B) toward the reference level. Copy the generated
+      profile into <code>imageryLayer.levelColorProfile = profile;</code>.
+    </p>
+
+    <fieldset>
+      <legend>Imagery source</legend>
+      <label for="url">URL template</label>
+      <input id="url" value="https://sample.com/{z}/{x}/{y}.jpg" /><br />
+      <span class="hint"
+        >Tokens {z} {x} {y} {s}; {s} is replaced round-robin from the subdomains
+        field.</span
+      ><br />
+      <label for="subdomains">Subdomains ({s})</label>
+      <input id="subdomains" value="a,b,c" /><br />
+      <label for="scheme">Tiling scheme</label>
+      <select id="scheme">
+        <option value="xyz">Web Mercator XYZ (y north at top)</option>
+        <option value="tms">Web Mercator TMS (y south at bottom)</option>
+        <option value="geographic">Geographic (lon/lat, 2 tiles at z0)</option>
+      </select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Sampling area</legend>
+      <label for="lon">Anchor longitude</label>
+      <input id="lon" type="number" step="0.0001" value="105.0" /> &deg;<br />
+      <label for="lat">Anchor latitude</label>
+      <input id="lat" type="number" step="0.0001" value="27.5" /> &deg;<br />
+      <span class="hint"
+        >The anchor selects one tile at the base level below; its rectangle is
+        the sampled area.</span
+      ><br />
+      <label for="levels">Levels</label>
+      <input id="levels" value="14,15,16,17,18" /><br />
+      <label for="reference">Reference level</label>
+      <input id="reference" type="number" value="16" /><br />
+      <label for="strength">Strength</label>
+      <input
+        id="strength"
+        type="number"
+        step="0.05"
+        min="0"
+        max="1"
+        value="0.8"
+      /><br />
+      <span class="hint"
+        >&lt;1 keeps part of the original per-level character: final =
+        (1-strength)*original + strength*(scale*original + offset).</span
+      ><br />
+      <label for="maxTiles">Max tiles per level</label>
+      <input id="maxTiles" type="number" value="256" /><br />
+      <span class="hint"
+        >Above the cap the finest levels are randomly subsampled, which slightly
+        reduces accuracy.</span
+      >
+    </fieldset>
+
+    <button id="calibrate">Calibrate</button>
+    <button id="download" disabled>Download profile.json</button>
+
+    <div id="log">Ready.</div>
+
+    <h3>Per-level statistics</h3>
+    <table id="statsTable"></table>
+
+    <h3>Solved correction profile</h3>
+    <table id="profileTable"></table>
+
+    <h3>Profile JSON (assign to imageryLayer.levelColorProfile)</h3>
+    <textarea id="profileJson" readonly></textarea>
+
+    <script>
+      (function () {
+        const TILE_SIZE = 256;
+
+        function log(message) {
+          document.getElementById("log").textContent = message;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Geographic / tile math for the three supported tiling schemes.
+        // ---------------------------------------------------------------------------
+
+        const schemes = {
+          xyz: {
+            // Slippy Web Mercator.
+            numberOfXTilesAtLevel(level) {
+              return 2 ** level;
+            },
+            numberOfYTilesAtLevel(level) {
+              return 2 ** level;
+            },
+            tileXYToRectangle(x, y, level) {
+              const n = 2 ** level;
+              const lon0 = (x / n) * 360 - 180;
+              const lon1 = ((x + 1) / n) * 360 - 180;
+              return {
+                west: lon0,
+                east: lon1,
+                south: mercatorYToLatitude(Math.PI * (1 - (2 * (y + 1)) / n)),
+                north: mercatorYToLatitude(Math.PI * (1 - (2 * y) / n)),
+              };
+            },
+            rectangleToTileXY(rectangle, level) {
+              const n = 2 ** level;
+              // Web Mercator Y is radians in (-pi, pi), positive north; slippy y is
+              // 0 at the top and grows southward.
+              const yTop =
+                0.5 - latitudeToMercatorY(rectangle.north) / (2 * Math.PI);
+              const yBottom =
+                0.5 - latitudeToMercatorY(rectangle.south) / (2 * Math.PI);
+              return {
+                x0: Math.floor(((rectangle.west + 180) / 360) * n),
+                x1: Math.ceil(((rectangle.east + 180) / 360) * n),
+                y0: Math.floor(yTop * n),
+                y1: Math.ceil(yBottom * n),
+              };
+            },
+          },
+          tms: null, // filled below as xyz with a y flip
+          geographic: {
+            numberOfXTilesAtLevel(level) {
+              return 2 * 2 ** level;
+            },
+            numberOfYTilesAtLevel(level) {
+              return 2 ** level;
+            },
+            tileXYToRectangle(x, y, level) {
+              const nx = 2 * 2 ** level;
+              const ny = 2 ** level;
+              return {
+                west: -180 + (x / nx) * 360,
+                east: -180 + ((x + 1) / nx) * 360,
+                south: 90 - ((y + 1) / ny) * 180,
+                north: 90 - (y / ny) * 180,
+              };
+            },
+            rectangleToTileXY(rectangle, level) {
+              const nx = 2 * 2 ** level;
+              const ny = 2 ** level;
+              return {
+                x0: Math.floor(((rectangle.west + 180) / 360) * nx),
+                x1: Math.ceil(((rectangle.east + 180) / 360) * nx),
+                y0: Math.floor(((90 - rectangle.north) / 180) * ny),
+                y1: Math.ceil(((90 - rectangle.south) / 180) * ny),
+              };
+            },
+          },
+        };
+        schemes.tms = {
+          numberOfXTilesAtLevel: schemes.xyz.numberOfXTilesAtLevel,
+          numberOfYTilesAtLevel: schemes.xyz.numberOfYTilesAtLevel,
+          tileXYToRectangle(x, y, level) {
+            return schemes.xyz.tileXYToRectangle(x, flipY(y, level), level);
+          },
+          rectangleToTileXY(rectangle, level) {
+            const range = schemes.xyz.rectangleToTileXY(rectangle, level);
+            const n = 2 ** level;
+            return {
+              x0: range.x0,
+              x1: range.x1,
+              y0: n - range.y1,
+              y1: n - range.y0,
+            };
+          },
+        };
+        function flipY(y, level) {
+          return 2 ** level - 1 - y;
+        }
+        function latitudeToMercatorY(latitudeDegrees) {
+          const clamped = Math.min(
+            Math.max(latitudeDegrees, -85.05112878),
+            85.05112878,
+          );
+          const radians = (clamped * Math.PI) / 180;
+          return Math.log(Math.tan(Math.PI / 4 + radians / 2));
+        }
+        function mercatorYToLatitude(mercatorY) {
+          return (
+            ((2 * Math.atan(Math.exp(mercatorY)) - Math.PI / 2) * 180) / Math.PI
+          );
+        }
+
+        // ---------------------------------------------------------------------------
+        // Tile sampling.
+        // ---------------------------------------------------------------------------
+
+        let subdomainIndex = 0;
+        function expandUrl(template, x, y, level, subdomains) {
+          return template
+            .replace("{z}", String(level))
+            .replace("{x}", String(x))
+            .replace("{y}", String(y))
+            .replace("{s}", () => {
+              if (subdomains.length === 0) {
+                return "a";
+              }
+              return subdomains[subdomainIndex++ % subdomains.length];
+            });
+        }
+
+        function loadTile(url) {
+          return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.crossOrigin = "anonymous";
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error(`Failed to load ${url}`));
+            image.src = url;
+          });
+        }
+
+        async function fetchWithConcurrency(items, worker, concurrency) {
+          const results = new Array(items.length);
+          let next = 0;
+          async function run() {
+            while (next < items.length) {
+              const index = next++;
+              results[index] = await worker(items[index], index);
+            }
+          }
+          await Promise.all(
+            Array.from({ length: Math.min(concurrency, items.length) }, run),
+          );
+          return results;
+        }
+
+        // Downscale + accumulate per-channel sums so every level contributes the
+        // same number of samples regardless of its native tile count.
+        function accumulateStats(context, image) {
+          context.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+          context.drawImage(image, 0, 0, TILE_SIZE, TILE_SIZE);
+          const pixels = context.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;
+          const sums = [0, 0, 0];
+          const squaredSums = [0, 0, 0];
+          let count = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i + 3] === 0) {
+              continue;
+            }
+            for (let channel = 0; channel < 3; ++channel) {
+              const value = pixels[i + channel] / 255;
+              sums[channel] += value;
+              squaredSums[channel] += value * value;
+            }
+            ++count;
+          }
+          return { sums, squaredSums, count };
+        }
+
+        async function sampleLevel(
+          scheme,
+          urlTemplate,
+          subdomains,
+          rectangle,
+          level,
+          maxTiles,
+        ) {
+          const range = scheme.rectangleToTileXY(rectangle, level);
+          // Uniform 2-D grid subsample. A row-major stride degenerates into a
+          // vertical stripe at fine levels (stride becomes a multiple of the row
+          // length), so different levels would average different geography and
+          // corrupt the comparison. The grid also anchors every level's samples
+          // at the same set of geographic points.
+          const total = (range.y1 - range.y0) * (range.x1 - range.x0);
+          let subsampled = false;
+          let stride = 1;
+          if (total > maxTiles) {
+            subsampled = true;
+            stride = Math.ceil(Math.sqrt(total / maxTiles));
+          }
+          const tiles = [];
+          for (let y = range.y0; y < range.y1; y += stride) {
+            for (let x = range.x0; x < range.x1; x += stride) {
+              tiles.push([x, y]);
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = TILE_SIZE;
+          canvas.height = TILE_SIZE;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+
+          const totals = { sums: [0, 0, 0], squaredSums: [0, 0, 0], count: 0 };
+          let failures = 0;
+          await fetchWithConcurrency(
+            tiles,
+            async ([x, y]) => {
+              const url = expandUrl(urlTemplate, x, y, level, subdomains);
+              try {
+                const image = await loadTile(url);
+                const stats = accumulateStats(context, image);
+                for (let channel = 0; channel < 3; ++channel) {
+                  totals.sums[channel] += stats.sums[channel];
+                  totals.squaredSums[channel] += stats.squaredSums[channel];
+                }
+                totals.count += stats.count;
+              } catch (error) {
+                ++failures;
+              }
+            },
+            8,
+          );
+
+          if (totals.count === 0) {
+            throw new Error(`Level ${level}: every tile failed to load`);
+          }
+
+          const mean = [];
+          const std = [];
+          for (let channel = 0; channel < 3; ++channel) {
+            const m = totals.sums[channel] / totals.count;
+            mean.push(m);
+            std.push(
+              Math.sqrt(totals.squaredSums[channel] / totals.count - m * m),
+            );
+          }
+          return {
+            level,
+            mean,
+            std,
+            tileCount: tiles.length,
+            subsampled,
+            failures,
+          };
+        }
+
+        // ---------------------------------------------------------------------------
+        // Solving and output.
+        // ---------------------------------------------------------------------------
+
+        // Mirror the engine's profile normalization clamps (ImageryLayer:
+        // scale 0.5-2.0, offset +/-0.25) so nothing saturates invisibly. Wide
+        // level ranges with mosaic transitions genuinely need corrections this
+        // large; the clamps only guard against degenerate statistics.
+        const MIN_SCALE = 0.5;
+        const MAX_SCALE = 2.0;
+        const MAX_OFFSET = 0.25;
+
+        function solveProfile(samples, referenceSample, strength) {
+          const levels = {};
+          for (const sample of samples) {
+            const scale = [];
+            const offset = [];
+            for (let channel = 0; channel < 3; ++channel) {
+              // Match the reference's mean and standard deviation exactly,
+              // bounded by the solver clamps above. When the two goals conflict
+              // (high gain pushes the required offset out of range), reduce the
+              // gain so the mean still matches: a residual contrast step is far
+              // less visible than a mean step. offset = refMean - s*mean in
+              // [-MAX_OFFSET, MAX_OFFSET] constrains s to this interval:
+              let channelScale = Math.min(
+                Math.max(
+                  referenceSample.std[channel] / sample.std[channel],
+                  MIN_SCALE,
+                ),
+                MAX_SCALE,
+              );
+              const mean = sample.mean[channel];
+              const offsetLower =
+                (referenceSample.mean[channel] - MAX_OFFSET) / mean;
+              const offsetUpper =
+                (referenceSample.mean[channel] + MAX_OFFSET) / mean;
+              channelScale = Math.min(
+                Math.max(
+                  Math.min(Math.max(channelScale, offsetLower), offsetUpper),
+                  MIN_SCALE,
+                ),
+                MAX_SCALE,
+              );
+              scale.push(round(channelScale));
+              offset.push(
+                round(
+                  Math.min(
+                    Math.max(
+                      referenceSample.mean[channel] -
+                        channelScale * sample.mean[channel],
+                      -MAX_OFFSET,
+                    ),
+                    MAX_OFFSET,
+                  ),
+                ),
+              );
+            }
+            levels[sample.level] = { scale, offset };
+          }
+          return {
+            strength,
+            referenceLevel: referenceSample.level,
+            levels,
+          };
+        }
+
+        function round(value) {
+          return Math.round(value * 10000) / 10000;
+        }
+
+        function renderStatsTable(samples) {
+          const rows = [
+            "<tr><th>level</th><th>tiles</th><th>fail</th><th>R mean</th><th>G mean</th><th>B mean</th><th>R std</th><th>G std</th><th>B std</th></tr>",
+          ];
+          for (const s of samples) {
+            rows.push(
+              `<tr><td>${s.level}</td><td>${s.tileCount}${s.subsampled ? "*" : ""}</td><td>${s.failures}</td>${s.mean
+                .map((m) => `<td>${m.toFixed(4)}</td>`)
+                .join("")}${s.std
+                .map((m) => `<td>${m.toFixed(4)}</td>`)
+                .join("")}</tr>`,
+            );
+          }
+          document.getElementById("statsTable").innerHTML = rows.join("");
+        }
+
+        function renderProfileTable(profile) {
+          const rows = [
+            "<tr><th>level</th><th>R scale</th><th>G scale</th><th>B scale</th><th>R offset</th><th>G offset</th><th>B offset</th></tr>",
+          ];
+          for (const level of Object.keys(profile.levels).sort(
+            (a, b) => a - b,
+          )) {
+            const entry = profile.levels[level];
+            rows.push(
+              `<tr><td>${level}</td>${entry.scale
+                .map((v) => `<td>${v.toFixed(4)}</td>`)
+                .join("")}${entry.offset
+                .map((v) => `<td>${v.toFixed(4)}</td>`)
+                .join("")}</tr>`,
+            );
+          }
+          document.getElementById("profileTable").innerHTML = rows.join("");
+        }
+
+        let currentProfileText = "";
+
+        document
+          .getElementById("calibrate")
+          .addEventListener("click", async () => {
+            const urlTemplate = document.getElementById("url").value.trim();
+            const subdomains = document
+              .getElementById("subdomains")
+              .value.split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            const scheme = schemes[document.getElementById("scheme").value];
+            const lon = parseFloat(document.getElementById("lon").value);
+            const lat = parseFloat(document.getElementById("lat").value);
+            const levels = document
+              .getElementById("levels")
+              .value.split(",")
+              .map((s) => parseInt(s.trim(), 10))
+              .filter((n) => Number.isFinite(n))
+              .sort((a, b) => a - b);
+            const referenceLevel = parseInt(
+              document.getElementById("reference").value,
+              10,
+            );
+            const strength = parseFloat(
+              document.getElementById("strength").value,
+            );
+            const maxTiles = parseInt(
+              document.getElementById("maxTiles").value,
+              10,
+            );
+
+            if (levels.length < 2 || !levels.includes(referenceLevel)) {
+              log(
+                "Levels must list at least two levels and include the reference level.",
+              );
+              return;
+            }
+
+            const baseLevel = levels[0];
+            const range = scheme.rectangleToTileXY(
+              { west: lon, east: lon, south: lat, north: lat },
+              baseLevel,
+            );
+            const anchor = scheme.tileXYToRectangle(
+              range.x0,
+              range.y0,
+              baseLevel,
+            );
+
+            try {
+              const samples = [];
+              for (const level of levels) {
+                log(
+                  `Sampling level ${level} (${levels.indexOf(level) + 1}/${levels.length})...`,
+                );
+                samples.push(
+                  await sampleLevel(
+                    scheme,
+                    urlTemplate,
+                    subdomains,
+                    anchor,
+                    level,
+                    maxTiles,
+                  ),
+                );
+              }
+
+              const reference = samples.find((s) => s.level === referenceLevel);
+              const profile = solveProfile(samples, reference, strength);
+
+              renderStatsTable(samples);
+              renderProfileTable(profile);
+              currentProfileText = JSON.stringify(profile, null, 2);
+              document.getElementById("profileJson").value = currentProfileText;
+              document.getElementById("download").disabled = false;
+
+              const failures = samples.reduce((sum, s) => sum + s.failures, 0);
+              const subsampled = samples.some((s) => s.subsampled);
+              log(
+                `Done: ${samples.length} levels calibrated toward z${referenceLevel}.${
+                  failures > 0 ? ` ${failures} tiles failed to load.` : ""
+                }${subsampled ? " Some levels were stride-subsampled (*); raise max tiles for full accuracy." : ""}`,
+              );
+            } catch (error) {
+              log(String(error));
+            }
+          });
+
+        document.getElementById("download").addEventListener("click", () => {
+          const blob = new Blob([currentProfileText], {
+            type: "application/json",
+          });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = "level-color-profile.json";
+          link.click();
+          URL.revokeObjectURL(link.href);
+        });
+      })();
+    </script>
+  </body>
+</html>
