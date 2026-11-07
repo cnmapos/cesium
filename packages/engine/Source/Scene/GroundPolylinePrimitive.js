@@ -182,7 +182,7 @@ function GroundPolylinePrimitive(options) {
 
   this._retainedGeometryInstances = undefined;
 
-  /** @private Root {@link GroundPolylineGeometry} ref from the last inner {@link Primitive} build. */
+  /** Root {@link GroundPolylineGeometry} ref from the last inner {@link Primitive} build. @private */
   this._lastGroundPolylineRootGeometry = undefined;
 
   this._ready = false;

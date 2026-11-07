@@ -1,5 +1,7 @@
 /.eslintcache
+/.claude
 /.externalToolBuilders
+/.husky
 /.gitattributes
 /.github
 /.idea
@@ -17,6 +19,7 @@
 /Build/Sandcastle
 /Build/Specs
 /Cesium-*.zip
+/ReleaseArtifacts
 /cesium-engine-*.tgz
 /cesium-widgets-*.tgz
 /Documentation
