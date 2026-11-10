@@ -2,16 +2,16 @@ import MVTDataProvider from "../../Source/Scene/MVTDataProvider.js";
 import Empty3DTileContent from "../../Source/Scene/Empty3DTileContent.js";
 
 describe("Scene/MVTDataProvider", function () {
-  it("uses the GeoVis label API's supported maximum zoom", function () {
+  it("uses standard MVT defaults for generic tile services", function () {
     const provider = new MVTDataProvider(
       "https://example.invalid/{z}/{x}/{y}",
-      {
-        format: "geovis",
-      },
+      {},
     );
 
-    expect(provider._maxZoom).toBe(18);
+    expect(provider._format).toBe("mvt");
+    expect(provider._maxZoom).toBe(14);
     expect(provider._maximumConcurrentRequests).toBe(12);
+    expect(provider._createTilesetLoadOptions().projectTo2D).toBeUndefined();
     expect(provider._labelTransitionDuration).toBe(0.2);
     expect(provider._labelTransitionSteps).toBe(4);
     expect(provider._maximumRetiringLabels).toBe(512);
@@ -19,7 +19,7 @@ describe("Scene/MVTDataProvider", function () {
     expect(provider._maximumCachedGlyphs).toBe(2048);
     expect(provider._minimumRebuildInterval).toBeUndefined();
     expect(provider._maximumVisibleLabels).toBeUndefined();
-    expect(provider._usesAdaptiveScreenSpaceError).toBe(true);
+    expect(provider._usesAdaptiveScreenSpaceError).toBe(false);
     provider.destroy();
   });
 
@@ -82,7 +82,19 @@ describe("Scene/MVTDataProvider", function () {
     provider.destroy();
   });
 
-  it("clamps an unsupported GeoVis maximum zoom", function () {
+  it("supports a generic MVT URL with an extension and query parameters", function () {
+    expect(
+      MVTDataProvider._parseTileCoordinates(
+        "https://example.invalid/tiles/2/1/3.pbf?access_token=test",
+      ),
+    ).toEqual({
+      tileZ: 2,
+      tileX: 1,
+      tileY: 3,
+    });
+  });
+
+  it("preserves an explicitly configured maximum zoom for GeoVis", function () {
     const provider = new MVTDataProvider(
       "https://example.invalid/{z}/{x}/{y}",
       {
@@ -91,7 +103,7 @@ describe("Scene/MVTDataProvider", function () {
       },
     );
 
-    expect(provider._maxZoom).toBe(18);
+    expect(provider._maxZoom).toBe(29);
     provider.destroy();
   });
 

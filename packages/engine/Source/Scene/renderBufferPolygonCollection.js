@@ -22,6 +22,7 @@ import AttributeCompression from "../Core/AttributeCompression.js";
 import IndexDatatype from "../Core/IndexDatatype.js";
 import BufferPolygonMaterial from "./BufferPolygonMaterial.js";
 import BlendOption from "./BlendOption.js";
+import WebGLConstants from "../Core/WebGLConstants.js";
 
 /** @import {TypedArray} from "../Core/globalTypes.js"; */
 /** @import FrameState from "./FrameState.js"; */
@@ -29,7 +30,7 @@ import BlendOption from "./BlendOption.js";
 
 /**
  * TODO(PR#13211): Need 'keyof' syntax to avoid duplicating attribute names.
- * @typedef {'positionHigh' | 'positionLow' | 'pickColor' | 'showColorAlpha'} BufferPolygonAttribute
+ * @typedef {'positionHigh' | 'positionLow' | 'pickColor' | 'showColorAlpha' | 'outlineWidthColorAlpha'} BufferPolygonAttribute
  * @ignore
  */
 
@@ -43,6 +44,7 @@ const BufferPolygonAttributeLocationsFloat64 = {
   positionLow: 1,
   pickColor: 2,
   showColorAlpha: 3,
+  outlineWidthColorAlpha: 4,
 };
 
 /**
@@ -54,6 +56,7 @@ const BufferPolygonAttributeLocations = {
   position: 0,
   pickColor: 1,
   showColorAlpha: 2,
+  outlineWidthColorAlpha: 3,
 };
 
 /**
@@ -61,9 +64,13 @@ const BufferPolygonAttributeLocations = {
  * @property {VertexArray} [vertexArray]
  * @property {Record<string, TypedArray>} [attributeArrays]
  * @property {TypedArray} [indexArray]
+ * @property {number} [triangleIndexMax]
  * @property {RenderState} [renderState]
+ * @property {RenderState} [outlineRenderState]
  * @property {ShaderProgram} [shaderProgram]
+ * @property {ShaderProgram} [outlineShaderProgram]
  * @property {DrawCommand} [command]
+ * @property {DrawCommand} [outlineCommand]
  * @property {Function} destroy
  * @ignore
  */
@@ -95,11 +102,13 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
     !defined(renderContext.indexArray)
   ) {
     const { vertexCountMax, triangleCountMax } = collection;
+    const triangleIndexMax = triangleCountMax * 3;
+    renderContext.triangleIndexMax = triangleIndexMax;
 
     // @ts-expect-error Requires https://github.com/CesiumGS/cesium/pull/13203.
     renderContext.indexArray = IndexDatatype.createTypedArray(
       vertexCountMax,
-      triangleCountMax * 3,
+      triangleIndexMax + vertexCountMax * 2,
     );
 
     renderContext.attributeArrays = {
@@ -111,6 +120,7 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
           }),
       pickColor: new Uint8Array(vertexCountMax * 4),
       showColorAlpha: new Float32Array(vertexCountMax * 3),
+      outlineWidthColorAlpha: new Float32Array(vertexCountMax * 3),
     };
   }
 
@@ -123,6 +133,8 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
     const indexArray = renderContext.indexArray;
     const pickColorArray = attributeArrays.pickColor;
     const showColorAlphaArray = attributeArrays.showColorAlpha;
+    const outlineWidthColorAlphaArray = attributeArrays.outlineWidthColorAlpha;
+    const triangleIndexMax = renderContext.triangleIndexMax;
 
     for (let i = _dirtyOffset, il = _dirtyOffset + _dirtyCount; i < il; i++) {
       collection.get(i, polygon);
@@ -149,6 +161,10 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
       const cartesianArray = !useFloat64 ? null : polygon.getPositions();
       polygon.getMaterial(material);
       const encodedColor = AttributeCompression.encodeRGB8(material.color);
+      const hasOutline = material.outlineWidth > 0;
+      const encodedOutlineColor = AttributeCompression.encodeRGB8(
+        hasOutline ? material.outlineColor : material.color,
+      );
       Color.fromRgba(polygon._pickId, pickColor);
 
       // Update vertex arrays.
@@ -172,8 +188,18 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
         showColorAlphaArray[vOffset * 3 + 1] = encodedColor;
         showColorAlphaArray[vOffset * 3 + 2] = material.color.alpha;
 
+        outlineWidthColorAlphaArray[vOffset * 3] = hasOutline
+          ? material.outlineWidth
+          : 0;
+        outlineWidthColorAlphaArray[vOffset * 3 + 1] = encodedOutlineColor;
+        outlineWidthColorAlphaArray[vOffset * 3 + 2] = hasOutline
+          ? material.outlineColor.alpha
+          : 0;
+
         vOffset++;
       }
+
+      updatePolygonOutlineIndices(polygon, indexArray, triangleIndexMax);
 
       polygon._dirty = false;
     }
@@ -250,6 +276,16 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
             usage: BufferUsage.STATIC_DRAW,
           }),
         },
+        {
+          index: attributeLocations.outlineWidthColorAlpha,
+          componentDatatype: ComponentDatatype.FLOAT,
+          componentsPerAttribute: 3,
+          vertexBuffer: Buffer.createVertexBuffer({
+            typedArray: attributeArrays.outlineWidthColorAlpha,
+            context,
+            usage: BufferUsage.STATIC_DRAW,
+          }),
+        },
       ],
     });
   } else if (collection._dirtyCount > 0) {
@@ -260,6 +296,14 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
       renderContext.indexArray,
       indexOffset,
       indexCount,
+    );
+    const triangleIndexMax = /** @type {number} */ (
+      renderContext.triangleIndexMax
+    );
+    renderContext.vertexArray.copyIndexFromRange(
+      renderContext.indexArray,
+      triangleIndexMax + vertexOffset * 2,
+      vertexCount * 2,
     );
 
     for (const key in attributeLocations) {
@@ -285,6 +329,19 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
     });
   }
 
+  if (!defined(renderContext.outlineRenderState)) {
+    renderContext.outlineRenderState = RenderState.fromCache({
+      blending:
+        collection._blendOption === BlendOption.OPAQUE
+          ? BlendingState.DISABLED
+          : BlendingState.ALPHA_BLEND,
+      depthTest: {
+        enabled: true,
+        func: WebGLConstants.LEQUAL,
+      },
+    });
+  }
+
   if (!defined(renderContext.shaderProgram)) {
     renderContext.shaderProgram = ShaderProgram.fromCache({
       context,
@@ -294,6 +351,21 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
       }),
       fragmentShaderSource: new ShaderSource({
         sources: [BufferPolygonMaterialFS],
+      }),
+      attributeLocations,
+    });
+  }
+
+  if (!defined(renderContext.outlineShaderProgram)) {
+    renderContext.outlineShaderProgram = ShaderProgram.fromCache({
+      context,
+      vertexShaderSource: new ShaderSource({
+        sources: [BufferPolygonMaterialVS],
+        defines: useFloat64 ? ["USE_FLOAT64"] : [],
+      }),
+      fragmentShaderSource: new ShaderSource({
+        sources: [BufferPolygonMaterialFS],
+        defines: ["OUTLINE"],
       }),
       attributeLocations,
     });
@@ -332,9 +404,87 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
 
   frameState.commandList.push(command);
 
+  if (collection._polygonOutlineEnabled) {
+    if (!defined(renderContext.outlineCommand)) {
+      renderContext.outlineCommand = new DrawCommand({
+        vertexArray: renderContext.vertexArray,
+        renderState: renderContext.outlineRenderState,
+        shaderProgram: renderContext.outlineShaderProgram,
+        primitiveType: PrimitiveType.LINES,
+        pass: Pass.OVERLAY,
+        pickId: collection._allowPicking ? "v_pickColor" : undefined,
+        owner: collection,
+        count: collection.vertexCount * 2,
+        modelMatrix: collection.modelMatrix, // shared reference
+        boundingVolume: collection.boundingVolume, // shared reference
+        debugShowBoundingVolume: collection.debugShowBoundingVolume,
+      });
+    }
+
+    const outlineCommand = renderContext.outlineCommand;
+    const outlineCount = collection.vertexCount * 2;
+    outlineCommand.offset = /** @type {number} */ (
+      renderContext.triangleIndexMax
+    );
+    if (outlineCommand.count !== outlineCount) {
+      outlineCommand.count = outlineCount;
+    }
+    if (
+      outlineCommand.debugShowBoundingVolume !==
+      collection.debugShowBoundingVolume
+    ) {
+      outlineCommand.debugShowBoundingVolume =
+        collection.debugShowBoundingVolume;
+    }
+    frameState.commandList.push(outlineCommand);
+  }
+
   collection._makeClean();
 
   return renderContext;
+}
+
+/**
+ * Writes two indices per polygon vertex, closing each exterior/interior ring.
+ * Edges on a clipped tile boundary are emitted as degenerate segments so they
+ * do not draw artificial tile seams. The fixed 2 * vertexCount layout keeps
+ * every polygon's outline range at `triangleIndexMax + vertexOffset * 2`, so
+ * dirty updates stay contiguous.
+ *
+ * @param {BufferPolygon} polygon
+ * @param {TypedArray} indexArray
+ * @param {number} triangleIndexMax
+ * @ignore
+ */
+function updatePolygonOutlineIndices(polygon, indexArray, triangleIndexMax) {
+  const tileBoundaryFlags = polygon._collection._polygonTileBoundaryFlags;
+  const holes = polygon.getHoles();
+  const ringStarts = [0];
+  for (let i = 0; i < holes.length; i++) {
+    ringStarts.push(holes[i]);
+  }
+
+  const globalVertexStart = polygon.vertexOffset;
+  let writeOffset = triangleIndexMax + globalVertexStart * 2;
+
+  for (let i = 0; i < ringStarts.length; i++) {
+    const ringStart = ringStarts[i];
+    const ringEnd =
+      i + 1 < ringStarts.length ? ringStarts[i + 1] : polygon.vertexCount;
+    const ringVertexCount = ringEnd - ringStart;
+
+    for (let j = 0; j < ringVertexCount; j++) {
+      const next = (j + 1) % ringVertexCount;
+      const vertexA = globalVertexStart + ringStart + j;
+      const vertexB = globalVertexStart + ringStart + next;
+      const isTileBoundaryEdge =
+        defined(tileBoundaryFlags) &&
+        (tileBoundaryFlags[vertexA] & tileBoundaryFlags[vertexB]) !== 0;
+
+      indexArray[writeOffset++] = vertexA;
+      indexArray[writeOffset++] = isTileBoundaryEdge ? vertexA : vertexB;
+    }
+  }
 }
 
 /**

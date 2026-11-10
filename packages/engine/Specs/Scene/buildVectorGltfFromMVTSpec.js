@@ -13,6 +13,28 @@ function parseGlbJson(glb) {
   return JSON.parse(new TextDecoder().decode(jsonBytes));
 }
 
+/**
+ * Read a scalar accessor backed by the GLB binary chunk.
+ * @param {Uint8Array} glb
+ * @param {object} gltf
+ * @param {number} accessorIndex
+ * @returns {Uint8Array}
+ */
+function readByteAccessor(glb, gltf, accessorIndex) {
+  const view = new DataView(glb.buffer, glb.byteOffset);
+  const jsonLength = view.getUint32(12, true);
+  const binaryChunkStart = 20 + jsonLength;
+  const binaryChunkLength = view.getUint32(binaryChunkStart, true);
+  const binaryChunk = glb.subarray(
+    binaryChunkStart + 8,
+    binaryChunkStart + 8 + binaryChunkLength,
+  );
+  const accessor = gltf.accessors[accessorIndex];
+  const bufferView = gltf.bufferViews[accessor.bufferView];
+  const byteOffset = bufferView.byteOffset + (accessor.byteOffset ?? 0);
+  return binaryChunk.subarray(byteOffset, byteOffset + accessor.count);
+}
+
 describe("Scene/buildVectorGltfFromMVT", function () {
   const tileCoordinates = {
     tileX: 0,
@@ -238,6 +260,45 @@ describe("Scene/buildVectorGltfFromMVT", function () {
         ).toBe(0);
       }
     }
+  });
+
+  it("marks polygon vertices on clipped tile boundaries", function () {
+    const decoded = {
+      layers: [
+        {
+          name: "boundary",
+          extent: 4096,
+          features: [
+            {
+              type: "Polygon",
+              geometry: [
+                [
+                  { x: 0, y: 1200 },
+                  { x: 1000, y: 1200 },
+                  { x: 1000, y: 2200 },
+                  { x: 0, y: 2200 },
+                  { x: 0, y: 1200 },
+                ],
+              ],
+              properties: {},
+            },
+          ],
+        },
+      ],
+    };
+
+    const glb = buildVectorGltfFromMVT(decoded, tileCoordinates);
+    const gltf = parseGlbJson(glb);
+    const polygonPrimitive = gltf.meshes[0].primitives.find(function (p) {
+      return p.mode === PrimitiveType.TRIANGLES;
+    });
+    const accessorIndex =
+      polygonPrimitive.extensions.CESIUM_mesh_vector.polygonTileBoundaryFlags;
+
+    expect(accessorIndex).toBeDefined();
+    expect(Array.from(readByteAccessor(glb, gltf, accessorIndex))).toEqual([
+      1, 0, 0, 1,
+    ]);
   });
 
   it("encodes string properties with binary values and offsets", function () {

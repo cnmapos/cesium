@@ -1840,6 +1840,9 @@ export class Vector {
 
   /** @type {TypedArray} */
   polygonIndicesOffsets = undefined;
+
+  /** @type {TypedArray} */
+  polygonTileBoundaryFlags = undefined;
 }
 
 ModelComponents.Quantization = Quantization;

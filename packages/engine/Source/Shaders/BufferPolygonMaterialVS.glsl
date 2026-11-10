@@ -6,15 +6,21 @@ in vec3 position;
 #endif
 in vec4 pickColor;
 in vec3 showColorAlpha;
+in vec3 outlineWidthColorAlpha;
 
 out vec4 v_pickColor;
 out vec4 v_color;
+out vec4 v_outlineColor;
+out float v_outlineWidth;
 
 void main()
 {
     float show = showColorAlpha.x;
     vec4 color = czm_decodeRGB8(showColorAlpha.y);
     float alpha = showColorAlpha.z;
+    float outlineWidth = outlineWidthColorAlpha.x;
+    vec4 outlineColor = czm_decodeRGB8(outlineWidthColorAlpha.y);
+    float outlineAlpha = outlineWidthColorAlpha.z;
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -34,6 +40,9 @@ void main()
 
     v_color = color;
     v_color.a *= alpha * show;
+    v_outlineWidth = outlineWidth;
+    v_outlineColor = outlineColor;
+    v_outlineColor.a *= outlineAlpha * show;
 
     gl_Position *= show;
 }

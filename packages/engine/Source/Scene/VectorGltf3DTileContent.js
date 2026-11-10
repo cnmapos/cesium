@@ -14,6 +14,7 @@ import Matrix4 from "../Core/Matrix4.js";
 import Model from "./Model/Model.js";
 import ModelUtility from "./Model/ModelUtility.js";
 import Pass from "../Renderer/Pass.js";
+import SceneMode from "./SceneMode.js";
 import createVectorTileBuffersFromModelComponents from "./Model/createVectorTileBuffersFromModelComponents.js";
 import defined from "../Core/defined.js";
 import destroyObject from "../Core/destroyObject.js";
@@ -118,6 +119,8 @@ class VectorGltf3DTileContent {
 
     /** @type {boolean} */
     this._ready = false;
+    /** @type {SceneMode|undefined} */
+    this._collectionSceneMode = undefined;
 
     /** @type {Matrix4} */
     this._modelMatrix = Matrix4.clone(Matrix4.IDENTITY);
@@ -317,6 +320,9 @@ class VectorGltf3DTileContent {
 
     for (const collection of this._collections.filter(isPolygonCollection)) {
       const featureTableId = this._collectionFeatureTableIds.get(collection);
+      collection._polygonOutlineEnabled =
+        defined(style.polygonOutlineColor) ||
+        defined(style.polygonOutlineWidth);
       for (let i = 0, il = collection.primitiveCount; i < il; i++) {
         collection.get(i, polygon);
         const feature = this.getFeature(polygon.featureId, featureTableId);
@@ -326,6 +332,18 @@ class VectorGltf3DTileContent {
         }
         if (defined(style.color)) {
           style.color.evaluate(feature, polygonMaterial.color);
+        }
+        if (defined(style.polygonOutlineColor)) {
+          style.polygonOutlineColor.evaluate(
+            feature,
+            polygonMaterial.outlineColor,
+          );
+        }
+        if (defined(style.polygonOutlineWidth)) {
+          const outlineWidth = style.polygonOutlineWidth.evaluate(feature);
+          polygonMaterial.outlineWidth = Number.isFinite(outlineWidth)
+            ? Math.max(0, outlineWidth)
+            : 0;
         }
 
         polygon.setMaterial(polygonMaterial);
@@ -348,16 +366,29 @@ class VectorGltf3DTileContent {
 
       // @ts-expect-error Requires Model conversion to ES6 class.
       if (model.ready) {
-        initializeVectorPrimitives(this);
+        initializeVectorPrimitives(this, frameState);
+        this._collectionSceneMode = frameState.mode;
         this._ready = true;
       }
     }
 
-    Matrix4.multiplyTransformation(
-      this._tile.computedTransform,
-      this._modelMatrix,
-      scratchTileModelMatrix,
-    );
+    if (
+      this._ready &&
+      frameState.mode !== this._collectionSceneMode &&
+      frameState.mode !== SceneMode.MORPHING
+    ) {
+      rebuildVectorPrimitives(this, frameState);
+    }
+
+    if (this._collectionSceneMode === SceneMode.SCENE3D) {
+      Matrix4.multiplyTransformation(
+        this._tile.computedTransform,
+        this._modelMatrix,
+        scratchTileModelMatrix,
+      );
+    } else {
+      Matrix4.clone(Matrix4.IDENTITY, scratchTileModelMatrix);
+    }
 
     // Only bake collections selected to render this frame (avoids duplicates).
     const isSelected = this._tile._selectedFrame === frameState.frameNumber;
@@ -488,9 +519,10 @@ function makeModelOptions(tileset, tile, content, glb) {
 
 /**
  * @param {VectorGltf3DTileContent} content
+ * @param {FrameState} frameState
  * @ignore
  */
-function initializeVectorPrimitives(content) {
+function initializeVectorPrimitives(content, frameState) {
   // @ts-expect-error Requires Model conversion to ES6 class.
   const components = content._model.sceneGraph.components;
 
@@ -509,12 +541,34 @@ function initializeVectorPrimitives(content) {
   const result = createVectorTileBuffersFromModelComponents(
     content,
     components,
+    frameState,
   );
 
   content._collections = result.collections;
   content._collectionLocalMatrices = result.collectionLocalMatrices;
   content._collectionFeatureTableIds = result.collectionFeatureTableIds;
   content._featuresByTableId = result.featuresByTableId;
+  content._collectionSceneMode = frameState.mode;
+}
+
+/**
+ * @param {VectorGltf3DTileContent} content
+ * @param {FrameState} frameState
+ * @ignore
+ */
+function rebuildVectorPrimitives(content, frameState) {
+  const vectorProvider = content._tileset._scene?.vectorProvider;
+  for (const collection of content._collections) {
+    vectorProvider?.remove(collection);
+    collection.destroy();
+  }
+  content._collections.length = 0;
+  content._collectionLocalMatrices.length = 0;
+  content._collectionFeatureTableIds.clear();
+  content._featuresByTableId.clear();
+  initializeVectorPrimitives(content, frameState);
+  // @ts-expect-error Requires Cesium3DTileset conversion to ES6 class.
+  content.applyStyle(content._tileset.style);
 }
 
 export default VectorGltf3DTileContent;

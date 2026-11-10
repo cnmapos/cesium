@@ -438,10 +438,13 @@ CameraFlightPath.createTween = function (scene, options) {
 
   const camera = scene.camera;
 
-  if (mode === SceneMode.COLUMBUS_VIEW && scene.columbusRepeatWorlds === true) {
-    // Columbus repeat worlds: fly to the copy of the destination nearest the
-    // camera's current copy so the flight pans locally instead of crossing a
-    // full world. In local (u, v, h) coordinates, u is the x component.
+  if (
+    (mode === SceneMode.SCENE2D || mode === SceneMode.COLUMBUS_VIEW) &&
+    scene.columbusRepeatWorlds === true
+  ) {
+    // Repeat worlds: fly to the copy of the destination nearest the camera's
+    // current copy so the flight pans locally instead of crossing a full
+    // world. In local (u, v, h) coordinates, u is the x component.
     scratchDestination.x = ColumbusWorlds.nearestWorldU(
       camera.position.x,
       destination.x,

@@ -1,6 +1,7 @@
 // @ts-check
 
 import Cartesian3 from "../../Core/Cartesian3.js";
+import CesiumMath from "../../Core/Math.js";
 import defined from "../../Core/defined.js";
 import Matrix4 from "../../Core/Matrix4.js";
 import PrimitiveType from "../../Core/PrimitiveType.js";
@@ -15,12 +16,15 @@ import VertexAttributeSemantic from "../VertexAttributeSemantic.js";
 import ModelReader from "./ModelReader.js";
 import ModelUtility from "./ModelUtility.js";
 import ModelComponents from "../ModelComponents.js";
+import SceneMode from "../SceneMode.js";
+import SceneTransforms from "../SceneTransforms.js";
 import Cesium3DTileVectorFeature from "../Cesium3DTileVectorFeature.js";
 
 /** @import { TypedArray, TypedArrayConstructor } from "../../Core/globalTypes.js"; */
 /** @import BufferPrimitive from "../BufferPrimitive.js"; */
 /** @import BufferPrimitiveCollection from "../BufferPrimitiveCollection.js"; */
 /** @import VectorGltf3DTileContent from "../VectorGltf3DTileContent.js"; */
+/** @import FrameState from "../FrameState.js"; */
 /** @import {Attribute, Components, Node, Polygon, Primitive, Vector} from "../ModelComponents.js"; */
 
 /**
@@ -33,6 +37,12 @@ import Cesium3DTileVectorFeature from "../Cesium3DTileVectorFeature.js";
  */
 
 const scratchPosition = new Cartesian3();
+const scratchWorldPosition = new Cartesian3();
+const scratchProjectedPosition = new Cartesian3();
+const scratchReferenceWorldPosition = new Cartesian3();
+const scratchReferenceProjectedPosition = new Cartesian3();
+const scratchProjectedMinimum = new Cartesian3();
+const scratchProjectedMaximum = new Cartesian3();
 const scratchPoint = new BufferPoint();
 const scratchPolyline = new BufferPolyline();
 const scratchPolygon = new BufferPolygon();
@@ -42,12 +52,22 @@ const scratchPolygon = new BufferPolygon();
  *
  * @param {VectorGltf3DTileContent} content
  * @param {Components} components
+ * @param {FrameState} frameState
  * @returns {VectorTileResult}
  *
  * @ignore
  */
-function createVectorTileBuffersFromModelComponents(content, components) {
+function createVectorTileBuffersFromModelComponents(
+  content,
+  components,
+  frameState,
+) {
   const rootNodes = components.scene.nodes;
+  const tileModelMatrix = Matrix4.multiplyTransformation(
+    content._tile.computedTransform,
+    content._modelMatrix,
+    new Matrix4(),
+  );
 
   /** @type {VectorTileResult} */
   const result = {
@@ -58,7 +78,14 @@ function createVectorTileBuffersFromModelComponents(content, components) {
   };
 
   for (let i = 0; i < rootNodes.length; i++) {
-    appendNodeToBuffers(content, rootNodes[i], Matrix4.IDENTITY, result);
+    appendNodeToBuffers(
+      content,
+      rootNodes[i],
+      Matrix4.IDENTITY,
+      tileModelMatrix,
+      frameState,
+      result,
+    );
   }
 
   return result;
@@ -165,6 +192,8 @@ function getPrimitiveCount(indices) {
  * @param {BufferPrimitiveCollection<BufferPrimitive>} collection
  * @param {number} collectionIndex
  * @param {Map<number, Cesium3DTileVectorFeature>} features
+ * @param {Matrix4} modelMatrix
+ * @param {FrameState} frameState
  * @ignore
  */
 function appendPrimitiveToBuffers(
@@ -173,6 +202,8 @@ function appendPrimitiveToBuffers(
   collection,
   collectionIndex,
   features,
+  modelMatrix,
+  frameState,
 ) {
   const positionAttribute = ModelUtility.getAttributeBySemantic(
     primitive,
@@ -185,6 +216,13 @@ function appendPrimitiveToBuffers(
       ? ModelReader.readAttributeAsRawCompactTypedArray(positionAttribute)
       : ModelReader.readAttributeAsTypedArray(positionAttribute));
 
+  const projection =
+    frameState.mode === SceneMode.SCENE3D
+      ? undefined
+      : projectPositionsFor2D(collectionPositions, modelMatrix, frameState);
+  const collectionPositionsToAppend =
+    projection?.positions ?? collectionPositions;
+
   /** @type {TypedArray} */
   const indices = primitive.indices
     ? ModelReader.readIndicesAsTypedArray(primitive.indices)
@@ -196,7 +234,7 @@ function appendPrimitiveToBuffers(
     appendBufferPoints(
       collection,
       collectionIndex,
-      collectionPositions,
+      collectionPositionsToAppend,
       indices,
       getFeature,
     );
@@ -204,7 +242,7 @@ function appendPrimitiveToBuffers(
     appendBufferPolylines(
       collection,
       collectionIndex,
-      collectionPositions,
+      collectionPositionsToAppend,
       indices,
       getFeature,
     );
@@ -213,7 +251,7 @@ function appendPrimitiveToBuffers(
       appendBufferPolygonsDeprecated(
         collection,
         collectionIndex,
-        collectionPositions,
+        collectionPositionsToAppend,
         indices,
         getFeature,
         primitive.vector,
@@ -222,12 +260,125 @@ function appendPrimitiveToBuffers(
       appendBufferPolygons(
         collection,
         collectionIndex,
-        collectionPositions,
+        collectionPositionsToAppend,
         getFeature,
         primitive.polygon,
       );
     }
   }
+
+  return projection?.referencePoint;
+}
+
+/**
+ * @param {TypedArray} positions
+ * @param {Matrix4} modelMatrix
+ * @param {FrameState} frameState
+ * @returns {{positions: TypedArray, referencePoint: Cartesian3}}
+ * @ignore
+ */
+function projectPositionsFor2D(positions, modelMatrix, frameState) {
+  const projectedPositions = positions.slice();
+  const mode = frameState.mode;
+  const worldWidth =
+    CesiumMath.TWO_PI * frameState.mapProjection.ellipsoid.maximumRadius;
+
+  // Use the model origin as the reference longitude. Vertices exactly on the
+  // antimeridian can be converted to either -PI or PI depending on tiny
+  // floating-point differences. Without a shared reference, those vertices
+  // produce triangles that span the entire width of the map in 2D.
+  let referenceEasting;
+  if (mode === SceneMode.COLUMBUS_VIEW || mode === SceneMode.SCENE2D) {
+    Matrix4.getTranslation(modelMatrix, scratchReferenceWorldPosition);
+    const referenceProjected = SceneTransforms.computeActualEllipsoidPosition(
+      frameState,
+      scratchReferenceWorldPosition,
+      scratchReferenceProjectedPosition,
+    );
+    if (defined(referenceProjected)) {
+      referenceEasting = referenceProjected.y;
+    }
+  }
+
+  const minimum = Cartesian3.fromElements(
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    scratchProjectedMinimum,
+  );
+  const maximum = Cartesian3.fromElements(
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    scratchProjectedMaximum,
+  );
+  let projectedCount = 0;
+
+  for (let i = 0; i < positions.length; i += 3) {
+    // @ts-expect-error https://github.com/CesiumGS/cesium/pull/13302
+    Cartesian3.fromArray(projectedPositions, i, scratchPosition);
+    Matrix4.multiplyByPoint(modelMatrix, scratchPosition, scratchWorldPosition);
+    const projected = SceneTransforms.computeActualEllipsoidPosition(
+      frameState,
+      scratchWorldPosition,
+      scratchProjectedPosition,
+    );
+    if (!defined(projected)) {
+      continue;
+    }
+
+    if (defined(referenceEasting)) {
+      const eastingOffset = projected.y - referenceEasting;
+      projected.y -=
+        getWorldCopyOffset(eastingOffset / worldWidth) * worldWidth;
+    }
+
+    Cartesian3.minimumByComponent(projected, minimum, minimum);
+    Cartesian3.maximumByComponent(projected, maximum, maximum);
+    projectedCount++;
+    projectedPositions[i] = projected.x;
+    projectedPositions[i + 1] = projected.y;
+    projectedPositions[i + 2] = projected.z;
+  }
+
+  if (projectedCount === 0) {
+    throw new RuntimeError(
+      "Failed to project vector tile positions to the current scene mode.",
+    );
+  }
+
+  const referencePoint = Cartesian3.add(minimum, maximum, new Cartesian3());
+  Cartesian3.multiplyByScalar(referencePoint, 0.5, referencePoint);
+
+  for (let i = 0; i < positions.length; i += 3) {
+    projectedPositions[i] -= referencePoint.x;
+    projectedPositions[i + 1] -= referencePoint.y;
+    projectedPositions[i + 2] -= referencePoint.z;
+  }
+
+  return {
+    positions: projectedPositions,
+    referencePoint,
+  };
+}
+
+/**
+ * Selects the world copy nearest to the collection reference. Exact half-world
+ * offsets are kept in the current copy instead of being rounded outward.
+ * Otherwise a vertex exactly at +180 degrees can be shifted to the -180 degree
+ * copy while the rest of its ring remains on the east side, producing
+ * triangles that span the entire map in 2D.
+ *
+ * @param {number} value Offset from the reference in world widths.
+ * @returns {number} The selected world copy.
+ * @ignore
+ */
+function getWorldCopyOffset(value) {
+  const nearest = Math.round(value);
+  if (Math.abs(value - nearest) === 0.5) {
+    return Math.trunc(value);
+  }
+  return nearest;
 }
 
 /**
@@ -410,9 +561,11 @@ function appendBufferPolygonsDeprecated(
   const polygonIndicesOffsets = vector.polygonIndicesOffsets;
   const polygonHoleCounts = vector.polygonHoleCounts;
   const polygonHoleOffsets = vector.polygonHoleOffsets;
+  collection._polygonTileBoundaryFlags = vector.polygonTileBoundaryFlags;
 
   const vertexCount = collectionPositions.length / 3;
   const polygonCount = polygonAttributeOffsets.length;
+  let polygonHoleOffset = 0;
   for (let i = 0; i < polygonCount; i++) {
     const polygonVertexStart = polygonAttributeOffsets[i];
     const polygonVertexEnd =
@@ -426,10 +579,14 @@ function appendBufferPolygonsDeprecated(
     let holes;
     if (defined(polygonHoleCounts) && polygonHoleCounts[i] > 0) {
       const holeCount = polygonHoleCounts[i];
-      holes = polygonHoleOffsets.slice(i, i + holeCount);
+      holes = polygonHoleOffsets.slice(
+        polygonHoleOffset,
+        polygonHoleOffset + holeCount,
+      );
       for (let h = 0; h < holeCount; h++) {
         holes[h] -= polygonVertexStart;
       }
+      polygonHoleOffset += holeCount;
     }
 
     const triangleIndexStart = polygonIndicesOffsets[i];
@@ -503,10 +660,13 @@ function appendBufferPolygons(
 
     // List start indices of interior loops ("holes").
     const holesArray = [];
+    let resultVertexOffset = 0;
     for (let j = 0; j < loopIndices.length; j++) {
       const isLastIndex = j + 1 === loopIndices.length;
       if (loopIndices[j] === loopRestartIndex && !isLastIndex) {
-        holesArray.push(j);
+        holesArray.push(resultVertexOffset);
+      } else {
+        resultVertexOffset++;
       }
     }
     const holes = new TypedArray(holesArray);
@@ -552,10 +712,19 @@ function appendBufferPolygons(
  * @param {VectorGltf3DTileContent} content
  * @param {Node} node
  * @param {Matrix4} parentTransform
+ * @param {Matrix4} tileModelMatrix
+ * @param {FrameState} frameState
  * @param {VectorTileResult} result
  * @ignore
  */
-function appendNodeToBuffers(content, node, parentTransform, result) {
+function appendNodeToBuffers(
+  content,
+  node,
+  parentTransform,
+  tileModelMatrix,
+  frameState,
+  result,
+) {
   const localTransform = ModelUtility.getNodeTransform(node);
   const nodeTransform = Matrix4.multiplyTransformation(
     parentTransform,
@@ -617,21 +786,37 @@ function appendNodeToBuffers(content, node, parentTransform, result) {
     }
 
     result.collections.push(collection);
-    result.collectionLocalMatrices.push(Matrix4.clone(nodeTransform));
-    result.collectionFeatureTableIds.set(collection, propertyTableId);
-
-    appendPrimitiveToBuffers(
+    const referencePoint = appendPrimitiveToBuffers(
       content,
       primitive,
       collection,
       result.collections.length - 1,
       result.featuresByTableId.get(propertyTableId),
+      Matrix4.multiplyTransformation(
+        tileModelMatrix,
+        nodeTransform,
+        new Matrix4(),
+      ),
+      frameState,
     );
+    result.collectionLocalMatrices.push(
+      defined(referencePoint)
+        ? Matrix4.fromTranslation(referencePoint, new Matrix4())
+        : Matrix4.clone(nodeTransform),
+    );
+    result.collectionFeatureTableIds.set(collection, propertyTableId);
   }
 
   const children = node.children;
   for (let i = 0; i < children.length; i++) {
-    appendNodeToBuffers(content, children[i], nodeTransform, result);
+    appendNodeToBuffers(
+      content,
+      children[i],
+      nodeTransform,
+      tileModelMatrix,
+      frameState,
+      result,
+    );
   }
 }
 

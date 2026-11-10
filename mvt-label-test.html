@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body,
+      #globe {
+        width: 100vw;
+        height: 100vh;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #101010;
+      }
+
+      .cesium-widget,
+      .cesium-widget canvas {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+    <script src="Build/CesiumUnminified/Cesium.js"></script>
+  </head>
+  <body>
+    <div id="globe"></div>
+    <script>
+      /* global Cesium */
+      (async () => {
+        const params = new URLSearchParams(location.search);
+        const repeat = params.get("repeat") !== "0";
+        const mode = params.get("mode") ?? "columbus";
+        const widget = new Cesium.CesiumWidget("globe", {
+          baseLayer: false,
+          mapProjection: new Cesium.WebMercatorProjection(),
+        });
+        widget.resize();
+        const scene = widget.scene;
+        scene.globe.baseColor = Cesium.Color.fromCssColorString("#e8ecef");
+        scene.renderError.addEventListener((scene, error) => {
+          window.__renderError = String(error?.message ?? error);
+          console.error(error);
+        });
+        scene.columbusRepeatWorlds = repeat;
+        scene.mode =
+          mode === "3d"
+            ? Cesium.SceneMode.SCENE3D
+            : mode === "2d"
+              ? Cesium.SceneMode.SCENE2D
+              : Cesium.SceneMode.COLUMBUS_VIEW;
+        scene.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            parseFloat(params.get("lon") ?? "90"),
+            parseFloat(params.get("lat") ?? "35"),
+            parseFloat(params.get("h") ?? "16000000"),
+          ),
+        });
+        const labelStyles = [
+          {
+            filter: [
+              "all",
+              ["has", "halo"],
+              ["==", ["get", "color"], "#262626"],
+            ],
+            textField: "title",
+            minZoom: 0,
+            maxZoom: 22,
+            priority: 1,
+            textSize: 12,
+            fillColor: "#262626",
+            outlineColor: "#ffffff",
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            dedupeGroup: "title",
+            collisionPadding: 7,
+          },
+          {
+            filter: [
+              "all",
+              ["has", "halo"],
+              ["==", ["get", "color"], "#0056E7"],
+            ],
+            textField: "title",
+            minZoom: 0,
+            maxZoom: 22,
+            priority: 1,
+            textSize: 12,
+            fillColor: "#0056E7",
+            outlineColor: "#ffffff",
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            dedupeGroup: "title",
+            collisionPadding: 7,
+          },
+        ];
+        const provider = await Cesium.MVTDataProvider.fromUrl(
+          "http://localhost:5173/mvt/tiles/{z}/{x}/{y}.pbf",
+          {
+            format: "mvt",
+            renderGeometry: true,
+            minZoom: 2,
+            maxZoom: 2,
+            labelStyles,
+            labelHeightReference:
+              params.get("noclamp") === "1"
+                ? Cesium.HeightReference.NONE
+                : params.get("heightRef") === "terrain"
+                  ? Cesium.HeightReference.CLAMP_TO_TERRAIN
+                  : undefined,
+            scene,
+          },
+        );
+        provider.tileset.style = new Cesium.Cesium3DTileStyle({
+          show: "${bordercolor} !== undefined",
+          color:
+            "${color} !== undefined ? color(${color}, ${coloropacity}) : color(${bordercolor}, ${borderopacity})",
+        });
+        scene.primitives.add(provider);
+        window.__provider = provider;
+        window.__widget = widget;
+        window.__ready = true;
+      })().catch((error) => {
+        window.__error = String(error?.message ?? error);
+        console.error(error);
+      });
+    </script>
+  </body>
+</html>

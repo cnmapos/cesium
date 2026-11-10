@@ -431,7 +431,8 @@ PolylineCollection.prototype.update = function (frameState) {
 
   const columbusRepeatWorlds =
     frameState.columbusRepeatWorlds === true &&
-    frameState.mode === SceneMode.COLUMBUS_VIEW;
+    (frameState.mode === SceneMode.SCENE2D ||
+      frameState.mode === SceneMode.COLUMBUS_VIEW);
   if (this._columbusRepeatWorlds !== columbusRepeatWorlds) {
     // Toggling repeat worlds changes whether polylines are split at the IDL,
     // which changes vertex buffer sizes; rebuild the vertex arrays.
@@ -1802,10 +1803,11 @@ PolylineBucket.prototype.getSegments = function (polyline, projection) {
 
   if (
     newPositions.length > 0 &&
-    this.mode === SceneMode.COLUMBUS_VIEW &&
+    (this.mode === SceneMode.SCENE2D ||
+      this.mode === SceneMode.COLUMBUS_VIEW) &&
     polyline._polylineCollection._columbusRepeatWorlds === true
   ) {
-    // Columbus repeat worlds: the IDL split is disabled in this mode, so lift
+    // Repeat worlds: the IDL split is disabled in this mode, so lift
     // consecutive projected u values onto the same world copy. The line stays
     // in the primary world; the scene renders the visible world copies by
     // shifting the camera, so a line crossing the seam needs no per-copy

@@ -16,6 +16,11 @@ import MetadataType from "./MetadataType.js";
 
 /** @ignore */
 const DEFAULT_HEIGHT = 0;
+const TILE_BOUNDARY_WEST = 1;
+const TILE_BOUNDARY_EAST = 2;
+const TILE_BOUNDARY_SOUTH = 4;
+const TILE_BOUNDARY_NORTH = 8;
+const TILE_BOUNDARY_EPSILON = 1e-6;
 
 const scratchWorld = new Cartesian3();
 const scratchLocal = new Cartesian3();
@@ -474,6 +479,8 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
     const polygonHoleCounts = [];
     /** @type {number[]} */
     const polygonHoleOffsets = [];
+    /** @type {number[]} */
+    const polygonTileBoundaryFlags = [];
     let polygonCount = 0;
 
     for (const feature of layer.features) {
@@ -543,7 +550,10 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
 
       if (feature.type === "Polygon") {
         const rawRings = /** @type {VectorTilePoint[][]} */ (feature.geometry);
-        const groups = groupPolygonRings(rawRings);
+        const clippedRings = rawRings
+          .map((ring) => clipRingToTileExtent(ring, extent))
+          .filter((ring) => ring.length >= 3);
+        const groups = groupPolygonRings(clippedRings);
 
         for (const group of groups) {
           const rings = [group.outerRing, ...group.holes];
@@ -551,6 +561,8 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
           const positions2D = [];
           /** @type {number[]} */
           const polygonPositionComponents = [];
+          /** @type {number[]} */
+          const polygonBoundaryFlags = [];
           /** @type {number[]} */
           const holeOffsets = [];
           let vertexOffset = 0;
@@ -574,6 +586,7 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
                 polygonPositionComponents,
               );
               vertexOffset++;
+              polygonBoundaryFlags.push(getTileBoundaryFlags(point, extent));
             }
           }
 
@@ -605,6 +618,9 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
 
           for (let i = 0; i < polygonPositionComponents.length; i++) {
             polygonPositions.push(polygonPositionComponents[i]);
+          }
+          for (let i = 0; i < polygonBoundaryFlags.length; i++) {
+            polygonTileBoundaryFlags.push(polygonBoundaryFlags[i]);
           }
           for (let i = 0; i < polygonPositionComponents.length / 3; i++) {
             polygonFeatureIds.push(currentFeatureId);
@@ -713,6 +729,7 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
       const holeOffsets = hasPolygonHoles
         ? new Uint32Array(polygonHoleOffsets)
         : undefined;
+      const tileBoundaryFlags = new Uint8Array(polygonTileBoundaryFlags);
       const minMax = computeMinMax(positions);
 
       const positionAccessor = addAccessor(positions, {
@@ -751,6 +768,11 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
             target: WebGLConstants.ARRAY_BUFFER,
           })
         : undefined;
+      const tileBoundaryFlagsAccessor = addAccessor(tileBoundaryFlags, {
+        type: "SCALAR",
+        componentType: ComponentDatatype.UNSIGNED_BYTE,
+        target: WebGLConstants.ARRAY_BUFFER,
+      });
       const attributes = /** @type {*} */ ({
         POSITION: positionAccessor,
       });
@@ -760,6 +782,7 @@ function buildVectorGltfFromMVT(decoded, tileCoordinates, options) {
           count: polygonCount,
           polygonAttributeOffsets: attributeOffsetsAccessor,
           polygonIndicesOffsets: indicesOffsetsAccessor,
+          polygonTileBoundaryFlags: tileBoundaryFlagsAccessor,
         },
       });
       if (hasPolygonHoles) {
@@ -942,6 +965,132 @@ function stripClosingVertex(ring) {
     return ring.slice(0, ring.length - 1);
   }
   return ring;
+}
+
+/**
+ * Clips a decoded MVT ring to the tile's actual extent. MVT tiles commonly
+ * include geometry in a buffer outside [0, extent]; rendering that buffer from
+ * adjacent tiles can overlap translucent polygons.
+ *
+ * @param {VectorTilePoint[]} ring
+ * @param {number} extent
+ * @returns {VectorTilePoint[]}
+ * @ignore
+ */
+function clipRingToTileExtent(ring, extent) {
+  const unclosedRing = stripClosingVertex(ring);
+  let clipped = unclosedRing;
+  clipped = clipRingToEdge(clipped, 0, extent, true, false);
+  clipped = clipRingToEdge(clipped, 0, extent, true, true);
+  clipped = clipRingToEdge(clipped, 0, extent, false, false);
+  clipped = clipRingToEdge(clipped, 0, extent, false, true);
+  return clipped;
+}
+
+/**
+ * Marks vertices that lie on a tile boundary after clipping. Polygon outlines
+ * skip edges whose endpoints share a boundary flag, preventing tile seams from
+ * being rendered as artificial borders.
+ *
+ * @param {VectorTilePoint} point
+ * @param {number} extent
+ * @returns {number}
+ * @ignore
+ */
+function getTileBoundaryFlags(point, extent) {
+  let flags = 0;
+  if (point.x <= TILE_BOUNDARY_EPSILON) {
+    flags |= TILE_BOUNDARY_WEST;
+  } else if (point.x >= extent - TILE_BOUNDARY_EPSILON) {
+    flags |= TILE_BOUNDARY_EAST;
+  }
+  if (point.y <= TILE_BOUNDARY_EPSILON) {
+    flags |= TILE_BOUNDARY_NORTH;
+  } else if (point.y >= extent - TILE_BOUNDARY_EPSILON) {
+    flags |= TILE_BOUNDARY_SOUTH;
+  }
+  return flags;
+}
+
+/**
+ * @param {VectorTilePoint} point
+ * @param {number} minimum
+ * @param {number} maximum
+ * @param {boolean} isX
+ * @param {boolean} isMaximum
+ * @returns {boolean}
+ * @ignore
+ */
+function isInsideEdge(point, minimum, maximum, isX, isMaximum) {
+  const value = isX ? point.x : point.y;
+  return isMaximum ? value <= maximum : value >= minimum;
+}
+
+/**
+ * @param {VectorTilePoint} previous
+ * @param {VectorTilePoint} current
+ * @param {number} minimum
+ * @param {number} maximum
+ * @param {boolean} isX
+ * @param {boolean} isMaximum
+ * @returns {VectorTilePoint}
+ * @ignore
+ */
+function intersectEdge(previous, current, minimum, maximum, isX, isMaximum) {
+  const previousValue = isX ? previous.x : previous.y;
+  const currentValue = isX ? current.x : current.y;
+  const boundary = isMaximum ? maximum : minimum;
+  const t = (boundary - previousValue) / (currentValue - previousValue);
+  const point = {
+    x: previous.x + t * (current.x - previous.x),
+    y: previous.y + t * (current.y - previous.y),
+  };
+  point[isX ? "x" : "y"] = boundary;
+  return point;
+}
+
+/**
+ * @param {VectorTilePoint[]} ring
+ * @param {number} minimum
+ * @param {number} maximum
+ * @param {boolean} isX
+ * @param {boolean} isMaximum
+ * @returns {VectorTilePoint[]}
+ * @ignore
+ */
+function clipRingToEdge(ring, minimum, maximum, isX, isMaximum) {
+  const clipped = [];
+  for (let i = 0; i < ring.length; i++) {
+    const current = ring[i];
+    const previous = ring[(i + ring.length - 1) % ring.length];
+    const currentInside = isInsideEdge(
+      current,
+      minimum,
+      maximum,
+      isX,
+      isMaximum,
+    );
+    const previousInside = isInsideEdge(
+      previous,
+      minimum,
+      maximum,
+      isX,
+      isMaximum,
+    );
+    if (currentInside) {
+      if (!previousInside) {
+        clipped.push(
+          intersectEdge(previous, current, minimum, maximum, isX, isMaximum),
+        );
+      }
+      clipped.push(current);
+    } else if (previousInside) {
+      clipped.push(
+        intersectEdge(previous, current, minimum, maximum, isX, isMaximum),
+      );
+    }
+  }
+  return clipped;
 }
 
 /**

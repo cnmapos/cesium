@@ -135,13 +135,14 @@ SceneTransforms.worldWithEyeOffsetToWindowCoordinates = function (
   const camera = scene.camera;
 
   if (
-    frameState.mode === SceneMode.COLUMBUS_VIEW &&
+    (frameState.mode === SceneMode.SCENE2D ||
+      frameState.mode === SceneMode.COLUMBUS_VIEW) &&
     frameState.columbusRepeatWorlds === true
   ) {
-    // Columbus repeat worlds: rendering replicates the data onto every world
-    // copy, so screen-space consumers (HTML overlays, editor handles) must
-    // project onto the copy nearest the camera as well. Columbus world
-    // coordinates are (height, u, v), so the copy offset applies to y.
+    // Repeat worlds: rendering replicates the data onto every world copy, so
+    // screen-space consumers (HTML overlays, editor handles) must project onto
+    // the copy nearest the camera as well. Both 2D and Columbus View place the
+    // map-u axis on world y, so the copy offset applies to y.
     actualPosition.y = ColumbusWorlds.nearestWorldU(
       camera.positionWC.y,
       actualPosition.y,

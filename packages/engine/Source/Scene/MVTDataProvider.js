@@ -81,6 +81,7 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
     options = options ?? {};
     super(urlTemplate, options);
     this._labelStyles = options.labelStyles ?? [];
+    this._labelsVisible = true;
     this._labelHeightReference =
       options.labelHeightReference ?? HeightReference.CLAMP_TO_GROUND;
     this._labelTransitionDuration = options.labelTransitionDuration ?? 0.2;
@@ -207,7 +208,34 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
         glyphReclaimMargin: this._glyphReclaimMargin,
         maximumVisibleLabels: this._maximumVisibleLabels,
       });
+      this._labelManager.setVisible(this._labelsVisible);
     }
+  }
+
+  /** @returns {boolean} */
+  get labelsVisible() {
+    return this._labelsVisible;
+  }
+
+  /** @param {boolean} value */
+  set labelsVisible(value) {
+    this.setLabelsVisible(value);
+  }
+
+  /**
+   * Shows or hides labels without discarding the geometry tiles or reloading
+   * the tile source. Re-enabling labels rebuilds the visible set from tiles
+   * that are already selected by the tileset.
+   * @param {boolean} visible
+   */
+  setLabelsVisible(visible) {
+    const nextValue = visible === true;
+    if (this._labelsVisible === nextValue) {
+      return;
+    }
+    this._labelsVisible = nextValue;
+    this._labelManager?.setVisible(nextValue);
+    this._scene?.requestRender?.();
   }
 
   /**

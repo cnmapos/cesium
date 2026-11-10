@@ -1,10 +1,16 @@
 import createMvtLabelCandidates, {
   getMvtLabelCandidatesByteLength,
 } from "../../Source/Scene/MvtLabelCandidates.js";
+import Cartesian3 from "../../Source/Core/Cartesian3.js";
+import Cartographic from "../../Source/Core/Cartographic.js";
+import Ellipsoid from "../../Source/Core/Ellipsoid.js";
 import HeightReference from "../../Source/Scene/HeightReference.js";
 import Matrix4 from "../../Source/Core/Matrix4.js";
 import MvtLabelManager from "../../Source/Scene/MvtLabelManager.js";
+import SceneMode from "../../Source/Scene/SceneMode.js";
 import BillboardLoadState from "../../Source/Scene/BillboardLoadState.js";
+import WebMercatorProjection from "../../Source/Core/WebMercatorProjection.js";
+import WebMercatorTilingScheme from "../../Source/Core/WebMercatorTilingScheme.js";
 
 describe("Scene/MvtLabelManager", function () {
   const tileCoordinates = { tileX: 3, tileY: 2, tileZ: 4 };
@@ -644,6 +650,173 @@ describe("Scene/MvtLabelManager", function () {
     manager.beginFrame({ frameNumber: 3 });
     manager.endFrame({ frameNumber: 3 });
     expect(removedLabels).toBe(1);
+    manager.destroy();
+  });
+
+  it("uses absolute label heights outside 3D", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      transitionDuration: 0,
+    });
+    let addedOptions;
+    const label = { heightReference: HeightReference.CLAMP_TO_GROUND };
+    manager._labelCollection = {
+      add: function (options) {
+        addedOptions = options;
+        return label;
+      },
+      remove: function () {},
+      update: function () {},
+      destroy: function () {},
+    };
+    const tile = { _selectedFrame: 1, computedTransform: Matrix4.IDENTITY };
+    manager.addTile(tile, tileCoordinates, [createTestCandidate("beijing")]);
+
+    for (const mode of [SceneMode.SCENE2D, SceneMode.COLUMBUS_VIEW]) {
+      tile._selectedFrame++;
+      const frameNumber = tile._selectedFrame;
+      manager.beginFrame({ frameNumber, mode });
+      manager.submitSelectedTiles({ frameNumber });
+      manager.endFrame({ frameNumber, mode });
+      expect(addedOptions.heightReference).toBe(HeightReference.NONE);
+      expect(label.heightReference).toBe(HeightReference.NONE);
+    }
+
+    tile._selectedFrame++;
+    const frameNumber = tile._selectedFrame;
+    manager.beginFrame({ frameNumber, mode: SceneMode.SCENE3D });
+    manager.submitSelectedTiles({ frameNumber });
+    manager.endFrame({ frameNumber, mode: SceneMode.SCENE3D });
+    expect(label.heightReference).toBe(HeightReference.CLAMP_TO_GROUND);
+    manager.destroy();
+  });
+
+  it("culls labels behind the globe in 3D", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      transitionDuration: 0,
+    });
+    const labels = [];
+    manager._labelCollection = {
+      add: function () {
+        const label = {};
+        labels.push(label);
+        return label;
+      },
+      remove: function () {},
+      update: function () {},
+      destroy: function () {},
+    };
+
+    const front = createTestCandidate("front");
+    front.tileX = 0;
+    front.tileY = 0;
+    front.tileZ = 0;
+    front.x = 0.5;
+    front.y = 0.5;
+    const back = createTestCandidate("back");
+    back.tileX = 1;
+    back.tileY = 0;
+    back.tileZ = 1;
+    back.x = 1.0;
+    back.y = 1.0;
+
+    const frameState = { frameNumber: 1, mode: SceneMode.SCENE3D };
+    const radius = Ellipsoid.WGS84.maximumRadius;
+    manager._scene = {
+      ellipsoid: Ellipsoid.WGS84,
+      frameState,
+      drawingBufferWidth: 1000,
+      drawingBufferHeight: 1000,
+      canvas: { clientWidth: 1000, clientHeight: 1000 },
+      camera: {
+        positionWC: new Cartesian3(2.0 * radius, 0.0, 0.0),
+        viewMatrix: Matrix4.fromTranslation(
+          new Cartesian3(-radius + 0.001, 0.0, 0.0),
+        ),
+        frustum: { projectionMatrix: Matrix4.IDENTITY },
+      },
+    };
+
+    const tile = { _selectedFrame: 1, computedTransform: Matrix4.IDENTITY };
+    manager.addTile(tile, { tileX: 0, tileY: 0, tileZ: 0 }, [front, back]);
+    manager.beginFrame(frameState);
+    manager.submitSelectedTiles(frameState);
+    manager.endFrame(frameState);
+
+    expect(labels.length).toBe(1);
+    expect(front.label).toBeDefined();
+    expect(back.label).toBeUndefined();
+    expect(manager._visibleCandidates).toEqual([front]);
+    manager.destroy();
+  });
+
+  it("interpolates label latitude in Web Mercator space", function () {
+    const manager = new MvtLabelManager({
+      scene: undefined,
+      styles: [{ textField: "name" }],
+      transitionDuration: 0,
+    });
+    let position;
+    manager._labelCollection = {
+      add: function (options) {
+        position = Cartesian3.clone(options.position);
+        return {};
+      },
+      remove: function () {},
+      update: function () {},
+      destroy: function () {},
+    };
+
+    const tileX = 3;
+    const tileY = 1;
+    const tileZ = 2;
+    const candidate = {
+      x: 0.5,
+      y: 0.5,
+      text: "Beijing",
+      styleIndex: 0,
+      stylePriority: 0,
+      tileX,
+      tileY,
+      tileZ,
+      sortKey: "beijing",
+    };
+    const tile = { _selectedFrame: 1, computedTransform: Matrix4.IDENTITY };
+    manager.addTile(tile, { tileX, tileY, tileZ }, [candidate]);
+
+    manager.beginFrame({ frameNumber: 1 });
+    manager.submitSelectedTiles({ frameNumber: 1 });
+    manager.endFrame({ frameNumber: 1 });
+
+    const rectangle = new WebMercatorTilingScheme().tileXYToRectangle(
+      tileX,
+      tileY,
+      tileZ,
+    );
+    const northAngle = WebMercatorProjection.geodeticLatitudeToMercatorAngle(
+      rectangle.north,
+    );
+    const southAngle = WebMercatorProjection.geodeticLatitudeToMercatorAngle(
+      rectangle.south,
+    );
+    const expectedLatitude =
+      WebMercatorProjection.mercatorAngleToGeodeticLatitude(
+        (northAngle + southAngle) * 0.5,
+      );
+    const expected = Cartesian3.fromRadians(
+      (rectangle.west + rectangle.east) * 0.5,
+      expectedLatitude,
+      0.0,
+    );
+
+    expect(Cartesian3.distance(position, expected)).toBeLessThan(1e-6);
+    expect(Cartographic.fromCartesian(position).latitude).toBeCloseTo(
+      expectedLatitude,
+      10,
+    );
     manager.destroy();
   });
 

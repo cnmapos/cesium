@@ -1508,15 +1508,16 @@ const DEFAULT_COLUMBUS_WORLD_OFFSETS = [0.0];
 const COLUMBUS_VISIBILITY_WORLD_OFFSETS = [];
 
 /**
- * Whether Columbus repeat worlds are enabled for this frame. Only meaningful
- * in {@link SceneMode.COLUMBUS_VIEW}; other modes never repeat.
+ * Whether repeat worlds are enabled for this frame. Supported in 2D and
+ * Columbus View; other modes never repeat.
  *
  * @private
  */
 function isColumbusRepeatActive(frameState) {
   return (
     frameState.columbusRepeatWorlds === true &&
-    frameState.mode === SceneMode.COLUMBUS_VIEW
+    (frameState.mode === SceneMode.SCENE2D ||
+      frameState.mode === SceneMode.COLUMBUS_VIEW)
   );
 }
 
@@ -2813,10 +2814,11 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
     }
 
     if (
-      frameState.mode === SceneMode.SCENE2D &&
+      (frameState.mode === SceneMode.SCENE2D ||
+        frameState.mode === SceneMode.COLUMBUS_VIEW) &&
       encoding.quantization === TerrainQuantization.BITS12
     ) {
-      // In 2D, the texture coordinates of the tile are interpolated over the rectangle to get the position in the vertex shader.
+      // In 2D and Columbus View, the texture coordinates of the tile are interpolated over the rectangle to get the position in the vertex shader.
       // When the texture coordinates are quantized, error is introduced. This can be seen through the 1px wide cracking
       // between the quantized tiles in 2D. To compensate for the error, move the expand the rectangle in each direction by
       // half the error amount.

@@ -111,9 +111,9 @@ const requestRenderAfterFrame = function (scene) {
  * @param {boolean} [options.scene3DOnly=false] If true, optimizes memory use and performance for 3D mode but disables the ability to use 2D or Columbus View.
  * @param {boolean} [options.shadows=false] Determines if shadows are cast by light sources.
  * @param {MapMode2D} [options.mapMode2D=MapMode2D.INFINITE_SCROLL] Determines if the 2D map is rotatable or can be scrolled infinitely in the horizontal direction.
- * @param {boolean} [options.columbusRepeatWorlds=false] If true, the Columbus View map repeats horizontally: translated
- *        copies of the globe surface tiles are rendered beyond the ±180° meridian so the map, entity placement, and
- *        picking continue seamlessly across the antimeridian.
+ * @param {boolean} [options.columbusRepeatWorlds=false] If true, the 2D or Columbus View map repeats horizontally:
+ *        translated copies of the globe surface tiles are rendered beyond the ±180° meridian so the map, entity
+ *        placement, and picking continue seamlessly across the antimeridian.
  * @param {boolean} [options.requestRenderMode=false] If true, rendering a frame will only occur when needed as determined by changes within the scene. Enabling improves performance of the application, but requires using {@link Scene#requestRender} to render a new frame explicitly in this mode. This will be necessary in many cases after making changes to the scene in other parts of the API. See {@link https://cesium.com/blog/2018/01/24/cesium-scene-rendering-performance/|Improving Performance with Explicit Rendering}.
  * @param {number} [options.maximumRenderTimeChange=0.0] If requestRenderMode is true, this value defines the maximum change in simulation time allowed before a render is requested. See {@link https://cesium.com/blog/2018/01/24/cesium-scene-rendering-performance/|Improving Performance with Explicit Rendering}.
  * @param {number} [options.depthPlaneEllipsoidOffset=0.0] Adjust the DepthPlane to address rendering artefacts below ellipsoid zero elevation.
@@ -1573,11 +1573,12 @@ Object.defineProperties(Scene.prototype, {
   },
 
   /**
-   * Gets or sets whether the Columbus View map repeats horizontally. When true,
-   * translated copies of the globe surface tiles are rendered beyond the ±180°
-   * meridian, and entity placement/picking wrap to the copy nearest the camera,
-   * so editing and animation work seamlessly across the antimeridian.
-   * Only has an effect in {@link SceneMode.COLUMBUS_VIEW}.
+   * Gets or sets whether the 2D or Columbus View map repeats horizontally. When
+   * true, translated copies of the globe surface tiles are rendered beyond the
+   * ±180° meridian, and entity placement/picking wrap to the copy nearest the
+   * camera, so editing and animation work seamlessly across the antimeridian.
+   * Only has an effect in {@link SceneMode.SCENE2D} and
+   * {@link SceneMode.COLUMBUS_VIEW}.
    * @memberof Scene.prototype
    *
    * @type {boolean}
@@ -3190,7 +3191,8 @@ function executeCommands(scene, passState) {
     !renderTranslucentDepthForPick &&
     useGlobeDepthFramebuffer &&
     frameState.columbusRepeatWorlds === true &&
-    scene.mode === SceneMode.COLUMBUS_VIEW &&
+    (scene.mode === SceneMode.SCENE2D ||
+      scene.mode === SceneMode.COLUMBUS_VIEW) &&
     (passes.render || passes.pick || passes.pickVoxel);
 
   const {
@@ -3561,7 +3563,8 @@ function executeCommands(scene, passState) {
 
   if (
     frameState.columbusRepeatWorlds === true &&
-    frameState.mode === SceneMode.COLUMBUS_VIEW &&
+    (frameState.mode === SceneMode.SCENE2D ||
+      frameState.mode === SceneMode.COLUMBUS_VIEW) &&
     (passes.render || passes.pick || passes.pickVoxel)
   ) {
     executeColumbusWorldCopyCommands(

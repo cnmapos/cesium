@@ -116,6 +116,22 @@ class BufferPolygonCollection extends BufferPrimitiveCollection {
     this._holeIndexView = null;
 
     /**
+     * Per-vertex tile side flags used to suppress outlines along clipped tile
+     * boundaries. Undefined for collections that do not originate from MVT.
+     * @type {TypedArray|undefined}
+     * @ignore
+     */
+    this._polygonTileBoundaryFlags = undefined;
+
+    /**
+     * Whether the collection draws polygon outlines. Vector tile styling sets
+     * this when either outline color or width is present in the style.
+     * @type {boolean}
+     * @ignore
+     */
+    this._polygonOutlineEnabled = false;
+
+    /**
      * @type {number}
      * @ignore
      */

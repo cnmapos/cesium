@@ -2544,6 +2544,10 @@ function loadMeshVectorExtension(loader, meshVectorExtension) {
     meshVectorExtension.polygonIndicesOffsets,
     "polygonIndicesOffsets",
   );
+  result.polygonTileBoundaryFlags = loadVectorAccessor(
+    meshVectorExtension.polygonTileBoundaryFlags,
+    "polygonTileBoundaryFlags",
+  );
 
   return result;
 }

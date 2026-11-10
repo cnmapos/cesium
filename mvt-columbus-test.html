@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body,
+      #globe {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #101010;
+      }
+    </style>
+    <script src="Build/CesiumUnminified/Cesium.js"></script>
+  </head>
+  <body>
+    <div id="globe"></div>
+    <script>
+      /* global Cesium */
+      (async () => {
+        const params = new URLSearchParams(location.search);
+        const repeat = params.get("repeat") !== "0";
+        const mode = params.get("mode") ?? "columbus";
+        const base = params.get("base") ?? "natural-earth";
+        const container = document.getElementById("globe");
+        container.style.width = `${window.innerWidth}px`;
+        container.style.height = `${window.innerHeight}px`;
+        const imagery =
+          base === "none"
+            ? undefined
+            : base === "solid"
+              ? await Cesium.SingleTileImageryProvider.fromUrl("solid.png", {
+                  tileWidth: 1,
+                  tileHeight: 1,
+                })
+              : await Cesium.TileMapServiceImageryProvider.fromUrl(
+                  Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII"),
+                );
+        const widget = new Cesium.CesiumWidget("globe", {
+          baseLayer: imagery ? new Cesium.ImageryLayer(imagery) : false,
+        });
+        widget.resize();
+        const scene = widget.scene;
+        scene.renderError.addEventListener((scene, error) => {
+          window.__renderError = String(error?.message ?? error);
+          console.error(error);
+        });
+        scene.columbusRepeatWorlds = repeat;
+        scene.mode =
+          mode === "3d"
+            ? Cesium.SceneMode.SCENE3D
+            : mode === "2d"
+              ? Cesium.SceneMode.SCENE2D
+              : Cesium.SceneMode.COLUMBUS_VIEW;
+        scene.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            parseFloat(params.get("lon") ?? "180"),
+            parseFloat(params.get("lat") ?? "10"),
+            parseFloat(params.get("h") ?? "25000000"),
+          ),
+        });
+        const provider = await Cesium.MVTDataProvider.fromUrl(
+          "http://localhost:5173/mvt/tiles/{z}/{x}/{y}.pbf",
+          {
+            format: "mvt",
+            renderGeometry: true,
+            minZoom: 2,
+            maxZoom: 2,
+            scene,
+          },
+        );
+        provider.tileset.style = new Cesium.Cesium3DTileStyle({
+          show: "${bordercolor} !== undefined",
+          color:
+            "${color} !== undefined ? color(${color}, ${coloropacity}) : color(${bordercolor}, ${borderopacity})",
+        });
+        scene.primitives.add(provider);
+        window.__ready = true;
+        window.__widget = widget;
+      })().catch((error) => {
+        window.__error = String(error?.message ?? error);
+        console.error(error);
+      });
+    </script>
+  </body>
+</html>

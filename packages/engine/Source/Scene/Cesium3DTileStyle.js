@@ -76,6 +76,8 @@ function Cesium3DTileStyle(style) {
 
   // Vector Tiles in 3D Tiles 2.0.
   this._lineWidth = undefined;
+  this._polygonOutlineColor = undefined;
+  this._polygonOutlineWidth = undefined;
 
   this._colorShaderFunction = undefined;
   this._showShaderFunction = undefined;
@@ -122,6 +124,8 @@ function setup(that, styleJson) {
 
   // Vector Tiles in 3D Tiles 2.0.
   that.lineWidth = styleJson.lineWidth;
+  that.polygonOutlineColor = styleJson.polygonOutlineColor;
+  that.polygonOutlineWidth = styleJson.polygonOutlineWidth;
 
   const meta = {};
   if (defined(styleJson.meta)) {
@@ -1286,6 +1290,42 @@ Object.defineProperties(Cesium3DTileStyle.prototype, {
       this._labelVerticalOrigin = getExpression(this, value);
       this._style.labelVerticalOrigin = getJsonFromExpression(
         this._labelVerticalOrigin,
+      );
+    },
+  },
+
+  /**
+   * Internal-only, supported in Vector Tiles with 3D Tiles 2.0.
+   * @memberof Cesium3DTileStyle.prototype
+   * @type {StyleExpression}
+   * @ignore
+   */
+  polygonOutlineColor: {
+    get: function () {
+      return this._polygonOutlineColor;
+    },
+    set: function (value) {
+      this._polygonOutlineColor = getExpression(this, value);
+      this._style.polygonOutlineColor = getJsonFromExpression(
+        this._polygonOutlineColor,
+      );
+    },
+  },
+
+  /**
+   * Internal-only, supported in Vector Tiles with 3D Tiles 2.0.
+   * @memberof Cesium3DTileStyle.prototype
+   * @type {StyleExpression}
+   * @ignore
+   */
+  polygonOutlineWidth: {
+    get: function () {
+      return this._polygonOutlineWidth;
+    },
+    set: function (value) {
+      this._polygonOutlineWidth = getExpression(this, value);
+      this._style.polygonOutlineWidth = getJsonFromExpression(
+        this._polygonOutlineWidth,
       );
     },
   },

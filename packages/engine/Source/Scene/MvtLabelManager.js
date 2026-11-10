@@ -6,9 +6,11 @@ import Color from "../Core/Color.js";
 import getTimestamp from "../Core/getTimestamp.js";
 import Matrix4 from "../Core/Matrix4.js";
 import Rectangle from "../Core/Rectangle.js";
+import WebMercatorProjection from "../Core/WebMercatorProjection.js";
 import WebMercatorTilingScheme from "../Core/WebMercatorTilingScheme.js";
 import defined from "../Core/defined.js";
 import destroyObject from "../Core/destroyObject.js";
+import EllipsoidalOccluder from "../Core/EllipsoidalOccluder.js";
 import oneTimeWarning from "../Core/oneTimeWarning.js";
 // @ts-expect-error rbush does not ship declarations in this workspace.
 import RBush from "rbush";
@@ -16,6 +18,7 @@ import HorizontalOrigin from "./HorizontalOrigin.js";
 import HeightReference from "./HeightReference.js";
 import LabelCollection from "./LabelCollection.js";
 import LabelStyle from "./LabelStyle.js";
+import SceneMode from "./SceneMode.js";
 import SceneTransforms from "./SceneTransforms.js";
 import VerticalOrigin from "./VerticalOrigin.js";
 import BillboardLoadState from "./BillboardLoadState.js";
@@ -99,6 +102,7 @@ class MvtLabelManager {
       options.threePointDepthTestDistance ??
         getMaximumThreePointDepthTestDistance(this._styles),
     );
+    this._visible = true;
     this._getTimestamp = getTimestamp;
     this._labelCollection = new LabelCollection({
       scene: this._scene,
@@ -136,6 +140,49 @@ class MvtLabelManager {
     return this._styles.length > 0;
   }
 
+  /** @returns {boolean} */
+  get visible() {
+    return this._visible;
+  }
+
+  /**
+   * Controls whether labels participate in the current frame. Hiding also
+   * removes live labels immediately so the change is reflected without waiting
+   * for candidates to retire through collision updates.
+   * @param {boolean} visible
+   */
+  setVisible(visible) {
+    if (this._visible === visible) {
+      return;
+    }
+    this._visible = visible;
+    if (!visible) {
+      const candidates = [
+        ...this._visibleCandidates,
+        ...this._retiringCandidates,
+      ];
+      this._visibleCandidates.length = 0;
+      this._nextVisibleCandidates.length = 0;
+      this._retiringCandidates.length = 0;
+      this._nextVisibleSet.clear();
+      this._retainedCandidates.clear();
+      this._frameCandidates.length = 0;
+      this._acceptedIds.clear();
+      this._textPositions.clear();
+      this._collisionTree.clear();
+      for (const candidate of candidates) {
+        if (defined(candidate.label)) {
+          this._labelCollection.remove(candidate.label);
+        }
+        // Recreating labels on the next visible frame starts from show=false,
+        // so clear the cached opacity transition state as well. Otherwise the
+        // opacity fast path would skip applying show=true to the new label.
+        resetCandidateLabel(candidate);
+      }
+    }
+    this._scene?.requestRender?.();
+  }
+
   /** @param {*} frameState */
   beginFrame(frameState) {
     if (this._frameNumber === frameState.frameNumber) {
@@ -143,6 +190,9 @@ class MvtLabelManager {
     }
     this._frameNumber = frameState.frameNumber;
     this._frameTime = this._getTimestamp();
+    if (!this._visible) {
+      return;
+    }
     this._rebuildLabelCollectionIfNeeded();
     this._updateDisplayZoom(frameState);
     this._frameCandidates.length = 0;
@@ -170,7 +220,7 @@ class MvtLabelManager {
 
   /** @param {*} entry @param {*} transform */
   submitTile(entry, transform) {
-    if (!this.enabled || !this._tiles.has(entry)) {
+    if (!this.enabled || !this._visible || !this._tiles.has(entry)) {
       return;
     }
     for (const candidate of entry.candidates) {
@@ -181,6 +231,10 @@ class MvtLabelManager {
 
   /** @param {*} frameState */
   submitSelectedTiles(frameState) {
+    if (!this.enabled || !this._visible) {
+      this._frameTileZoom = undefined;
+      return;
+    }
     let maximumSelectedZoom = -1;
     for (const entry of this._tiles) {
       const tileZoom = entry.tileCoordinates.tileZ;
@@ -196,11 +250,20 @@ class MvtLabelManager {
 
   /** @param {*} frameState */
   endFrame(frameState) {
-    if (!this.enabled || this._frameNumber !== frameState.frameNumber) {
+    if (
+      !this.enabled ||
+      !this._visible ||
+      this._frameNumber !== frameState.frameNumber
+    ) {
       return;
     }
 
     const scene = this._scene;
+    const ellipsoidOccluder = createEllipsoidOccluder(scene, frameState);
+    const heightReference = getHeightReference(
+      frameState.mode,
+      this._heightReference,
+    );
     const previousVisibleCandidates = this._visibleCandidates;
     const nextVisibleCandidates = this._nextVisibleCandidates;
     const acceptedIds = this._acceptedIds;
@@ -243,6 +306,12 @@ class MvtLabelManager {
       }
 
       getWorldPosition(currentCandidate, scratchWorldPosition);
+      if (
+        defined(ellipsoidOccluder) &&
+        !ellipsoidOccluder.isPointVisible(scratchWorldPosition)
+      ) {
+        continue;
+      }
       if (defined(scene)) {
         const windowPosition = SceneTransforms.worldToWindowCoordinates(
           scene,
@@ -275,7 +344,7 @@ class MvtLabelManager {
         currentCandidate,
         style,
         scratchWorldPosition,
-        this._heightReference,
+        heightReference,
       );
       this._activateCandidate(currentCandidate, style, this._frameTime);
       nextVisibleCandidates.push(currentCandidate);
@@ -307,6 +376,12 @@ class MvtLabelManager {
       }
 
       getWorldPosition(candidate, scratchWorldPosition);
+      if (
+        defined(ellipsoidOccluder) &&
+        !ellipsoidOccluder.isPointVisible(scratchWorldPosition)
+      ) {
+        continue;
+      }
       if (defined(scene)) {
         const windowPosition = SceneTransforms.worldToWindowCoordinates(
           scene,
@@ -338,7 +413,7 @@ class MvtLabelManager {
         candidate,
         style,
         scratchWorldPosition,
-        this._heightReference,
+        heightReference,
       );
       this._activateCandidate(candidate, style, this._frameTime);
       nextVisibleCandidates.push(candidate);
@@ -689,6 +764,31 @@ function getViewZoom(frameState) {
   return Math.max(0, zoom);
 }
 
+/** @param {*} scene @param {*} frameState @returns {EllipsoidalOccluder|undefined} */
+function createEllipsoidOccluder(scene, frameState) {
+  if (
+    frameState.mode !== SceneMode.SCENE3D ||
+    !defined(scene) ||
+    !defined(scene.ellipsoid)
+  ) {
+    return undefined;
+  }
+  const cameraPosition =
+    frameState.camera?.positionWC ?? scene.camera?.positionWC;
+  if (!defined(cameraPosition)) {
+    return undefined;
+  }
+  return new EllipsoidalOccluder(scene.ellipsoid, cameraPosition);
+}
+
+/** @param {SceneMode|undefined} mode @param {HeightReference} heightReference */
+function getHeightReference(mode, heightReference) {
+  if (mode === SceneMode.SCENE2D || mode === SceneMode.COLUMBUS_VIEW) {
+    return HeightReference.NONE;
+  }
+  return heightReference;
+}
+
 /** @param {Set<*>} entries @param {number} maximumTileZoom */
 /** @param {Map<string, Array<Cartesian2>>} textPositions @param {string} text @param {Cartesian2} position */
 function isDuplicateText(textPositions, text, position) {
@@ -865,8 +965,14 @@ function getWorldPosition(candidate, result) {
   );
   const longitude =
     rectangle.west + (rectangle.east - rectangle.west) * candidate.x;
-  const latitude =
-    rectangle.north + (rectangle.south - rectangle.north) * candidate.y;
+  const northMercatorAngle =
+    WebMercatorProjection.geodeticLatitudeToMercatorAngle(rectangle.north);
+  const southMercatorAngle =
+    WebMercatorProjection.geodeticLatitudeToMercatorAngle(rectangle.south);
+  const latitude = WebMercatorProjection.mercatorAngleToGeodeticLatitude(
+    northMercatorAngle +
+      (southMercatorAngle - northMercatorAngle) * candidate.y,
+  );
   Cartesian3.fromRadians(longitude, latitude, 0, undefined, scratchPosition);
   return Matrix4.multiplyByPoint(candidate.transform, scratchPosition, result);
 }
@@ -954,6 +1060,9 @@ function getOrCreateLabel(
     });
   }
   label.position = position;
+  if (label.heightReference !== heightReference) {
+    label.heightReference = heightReference;
+  }
   return label;
 }
 

@@ -768,12 +768,12 @@ function updateMembers(camera) {
       camera._projection.unproject(positionENU, camera._positionCartographic);
 
       if (
-        mode === SceneMode.COLUMBUS_VIEW &&
+        (mode === SceneMode.SCENE2D || mode === SceneMode.COLUMBUS_VIEW) &&
         camera._scene.columbusRepeatWorlds === true
       ) {
-        // Columbus repeat worlds: the camera may sit on any world copy, which
-        // unprojects to a longitude outside [-180°, 180°]; wrap it so
-        // rectangle containment checks see the equivalent primary point.
+        // Repeat worlds: the camera may sit on any world copy, which unprojects
+        // to a longitude outside [-180°, 180°]; wrap it so rectangle
+        // containment checks see the equivalent primary point.
         camera._positionCartographic.longitude = CesiumMath.negativePiToPi(
           camera._positionCartographic.longitude,
         );
@@ -1387,6 +1387,16 @@ function setView2D(camera, position, hpr, convert) {
     }
 
     Cartesian2.clone(position, camera.position);
+
+    if (camera._scene.columbusRepeatWorlds === true) {
+      // Repeat worlds: keep the destination on the camera's current world copy
+      // instead of snapping the view back to the primary world.
+      camera.position.x = ColumbusWorlds.nearestWorldU(
+        camera.positionWC.y,
+        camera.position.x,
+        camera._projection,
+      );
+    }
 
     const newLeft = -position.z * 0.5;
     const newRight = -newLeft;

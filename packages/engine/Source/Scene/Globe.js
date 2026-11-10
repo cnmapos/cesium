@@ -800,7 +800,8 @@ Globe.prototype.pickWorldCoordinates = function (
   const projection = scene.mapProjection;
 
   const repeatWorlds =
-    scene.columbusRepeatWorlds === true && mode === SceneMode.COLUMBUS_VIEW;
+    scene.columbusRepeatWorlds === true &&
+    (mode === SceneMode.SCENE2D || mode === SceneMode.COLUMBUS_VIEW);
   const worldWidth = repeatWorlds
     ? getGlobeColumbusWorldWidth(projection)
     : 0.0;
