@@ -706,6 +706,9 @@ class GlobeSurfaceTileProvider {
     // Translated Columbus-world copies may be visible even when the tile's
     // primary position is not. Resolve them up front so fog and frustum tests
     // account for every copy, and use the nearest copy for LOD distance.
+    // 仅在存在非零世界副本时覆盖距离：哥伦布视图的包围球与常规
+    // computeDistanceToTile 的坐标系不同，主世界(偏移 0)上覆盖会让
+    // LOD 选层抖动，极端相机轨迹下引发瓦片风暴（渲染进程 OOM）。
     let columbusOffsets;
     if (isColumbusRepeatActive(frameState)) {
       columbusOffsets = computeColumbusTileWorldOffsets(this, tile, frameState);
@@ -713,11 +716,14 @@ class GlobeSurfaceTileProvider {
         if (columbusOffsets.length === 0) {
           return Visibility.NONE;
         }
-        tile._distance = nearestColumbusSphereDistance(
-          frameState.camera.positionWC,
-          columbusTileSphereScratch,
-          columbusOffsets,
-        );
+        const hasWorldCopy = columbusOffsets.some((o) => o !== 0);
+        if (hasWorldCopy) {
+          tile._distance = nearestColumbusSphereDistance(
+            frameState.camera.positionWC,
+            columbusTileSphereScratch,
+            columbusOffsets,
+          );
+        }
       }
     }
 
@@ -1499,7 +1505,7 @@ const northeastScratch = new Cartesian3();
 // How many world copies to test and render on either side of the camera's
 // own world when Columbus repeat worlds are enabled. Five visible worlds is
 // far beyond any practical viewport while bounding worst-case command count.
-const COLUMBUS_MAX_EXTRA_WORLDS = 2;
+const COLUMBUS_MAX_EXTRA_WORLDS = 1;
 
 const columbusRepeatSphereScratch = new BoundingSphere();
 const columbusNearestCenterScratch = new Cartesian3();

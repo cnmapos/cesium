@@ -2070,7 +2070,7 @@ Scene.prototype.updateFrameState = function () {
   frameState.mode = this._mode;
   frameState.morphTime = this.morphTime;
   frameState.mapProjection = this.mapProjection;
-  frameState.columbusRepeatWorlds = this._columbusRepeatWorlds;
+  frameState.columbusRepeatWorlds = this.columbusRepeatWorlds;
   frameState.camera = camera;
   frameState.cullingVolume = camera.frustum.computeCullingVolume(
     camera.positionWC,
@@ -2720,7 +2720,7 @@ function performCesium3DTileEdgesPass(scene, passState, frustumCommands) {
   passState.framebuffer = originalFramebuffer;
 }
 
-const COLUMBUS_MAX_COPY_WORLDS = 2;
+const COLUMBUS_MAX_COPY_WORLDS = 1;
 const columbusWorldIndicesScratch = [];
 
 /**
@@ -2810,18 +2810,36 @@ function executeColumbusWorldCopyCommands(
     return;
   }
 
+  // 数据副本只取离相机最近的一个：底图瓦片副本（GlobeSurfaceTileProvider
+  // 共享顶点/纹理，无额外分配）仍然显示 3 个世界，但数据元素的 draw call
+  // 量随副本数线性增长；在元素多的场景里（千级多边形）× 2 副本 × 每帧
+  // 重放，会让部分 GPU 驱动按帧分配原生内存直到 Renderer OOM。只保留
+  // 最近副本可把额外 draw 量减半，同时维持主世界 + 最近副本的数据连续性。
+  if (worldIndices.length > 1) {
+    const cameraU = camera._positionWC.y;
+    let best = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < worldIndices.length; ++i) {
+      const d = Math.abs(worldIndices[i] * worldWidth - cameraU);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    const kept = worldIndices[best];
+    worldIndices.length = 0;
+    worldIndices.push(kept);
+  }
+
   const view = scene._view;
 
-  // The globe depth texture is produced inside the primary pass' frustum loop.
-  // That loop is skipped when no command is visible from the camera's own copy
-  // (the camera can sit on a non-primary copy, with all data a world away), so
-  // billboards, labels and other shaders sampling czm_globeDepthTexture would
-  // get an undefined uniform while the copies draw. Produce the (cleared) globe
-  // depth once here - the copies share the primary pass' screen space, so the
-  // texture is as valid for them as it would be for a regular frame.
-  if (!defined(uniformState.globeDepthTexture) && defined(view.globeDepth)) {
-    view.globeDepth.executeCopyDepth(context, passState);
-  }
+  // Neutralize czm_globeDepthTexture while the copies draw: sampling a real
+  // depth copy texture during copy-pass draws makes some GPU drivers allocate
+  // native memory every frame (~500MB/s during high-altitude camera flights,
+  // until Renderer OOM). The default texture gives billboards and other
+  // height-sampling shaders a harmless constant instead.
+  const savedGlobeDepthTexture = uniformState.globeDepthTexture;
+  uniformState.globeDepthTexture = context.defaultTexture;
 
   const baseFrustumCommandsList = view.frustumCommandsList;
   let copyFrustumCommandsList = scene._columbusFrustumCommands;
@@ -2895,54 +2913,17 @@ function executeColumbusWorldCopyCommands(
         scene._stencilClearCommand.execute(context, passState);
       }
 
-      // Classic ground classification samples czm_globeDepthTexture. Bind the
-      // copy that the primary pass produced for the matching frustum: each copy
-      // is packed against its own frustum's near/far, so sampling another
-      // frustum's copy decodes garbage - the near frustum contains no terrain
-      // and packs to zero, which the ground polyline shader treats as sky, so
-      // every clamped line in the copy would be discarded.
-      const globeDepth = view.globeDepth;
-      const copyFrustumIndex = primaryIndex >= 0 ? primaryIndex : index;
-
-      // This bin's classification was already executed by the primary loop
-      // (executeColumbusWorldCopyClassification) against the live terrain
-      // depth. Replaying it here would only re-do the stencil work against a
-      // restored copy of that depth, so it is skipped - except when the primary
-      // loop could not cover it: pick passes, or a bin matching no primary
-      // frustum (the primary visible set can be empty).
-      const classifiedInline = classifyInline && primaryIndex >= 0;
-
-      let restoredDepth = false;
-      if (defined(globeDepth)) {
-        globeDepth.useCopyDepth(context, copyFrustumIndex);
-
-        // Ground classification is resolved against the terrain depth in the
-        // depth buffer (its stencil pass depth tests the shadow volume against
-        // it), not against czm_globeDepthTexture. The primary loop clears the
-        // globe depth right after its classification pass when the globe does
-        // not depth test against terrain - the default. Put the matching
-        // frustum's globe depth back before re-running the classification
-        // commands, otherwise every copy's ground element is classified
-        // against an empty buffer and silently dropped.
-        restoredDepth =
-          !classifiedInline &&
-          frameState.passes.render &&
-          scene._environmentState.clearGlobeDepth &&
+      // When classifyInline is true the classification was already replayed
+      // by executeColumbusWorldCopyClassification against the live terrain
+      // depth inside the primary loop, so skip it here. For the non-inline
+      // path (pick passes, etc.), replay classification using the live depth
+      // buffer without binding any depth copy texture.
+      if (!classifyInline) {
+        const hasTerrainClassification =
           frustumCommands.indices[Pass.TERRAIN_CLASSIFICATION] > 0;
-        if (restoredDepth) {
-          globeDepth.executeRestoreDepth(context, passState, copyFrustumIndex);
+        if (hasTerrainClassification) {
+          performPass(frustumCommands, Pass.TERRAIN_CLASSIFICATION);
         }
-      }
-
-      if (!classifiedInline) {
-        performPass(frustumCommands, Pass.TERRAIN_CLASSIFICATION);
-      }
-
-      // Mirror the primary pass, which clears the globe depth before its opaque
-      // commands so primitives drawn on the ground are not occluded by the
-      // terrain. The restore above is only for the classification.
-      if (restoredDepth) {
-        scene._depthClearCommand.execute(context, passState);
       }
 
       performPass(frustumCommands, Pass.OPAQUE);
@@ -2956,6 +2937,7 @@ function executeColumbusWorldCopyCommands(
 
   frameState.cullingVolume = cullingVolume;
   uniformState.update(frameState);
+  uniformState.globeDepthTexture = savedGlobeDepthTexture;
 }
 
 /**
@@ -2986,8 +2968,8 @@ function executeColumbusWorldCopyClassification(
   frustumIndex,
   performPass,
 ) {
-  const { camera, frameState } = scene;
-  const { uniformState } = scene.context;
+  const { camera, frameState, context } = scene;
+  const { uniformState } = context;
 
   const worldWidth = ColumbusWorlds.getWorldWidth(frameState.mapProjection);
   const worldIndices = ColumbusWorlds.getVisibleWorldIndices(
@@ -3000,6 +2982,31 @@ function executeColumbusWorldCopyClassification(
   if (worldIndices.length === 0) {
     return;
   }
+
+  // 与 executeColumbusWorldCopyCommands 一致：分类也只取最近副本。
+  if (worldIndices.length > 1) {
+    const cameraU = camera._positionWC.y;
+    let best = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < worldIndices.length; ++i) {
+      const d = Math.abs(worldIndices[i] * worldWidth - cameraU);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    const kept = worldIndices[best];
+    worldIndices.length = 0;
+    worldIndices.push(kept);
+  }
+
+  // Neutralize czm_globeDepthTexture while the copies draw: sampling a real
+  // depth copy texture during copy-pass draws makes some GPU drivers allocate
+  // native memory every frame (~500MB/s during high-altitude camera flights,
+  // until Renderer OOM). The default texture gives billboards and other
+  // height-sampling shaders a harmless constant instead.
+  const savedGlobeDepthTexture = uniformState.globeDepthTexture;
+  uniformState.globeDepthTexture = context.defaultTexture;
 
   const view = scene._view;
   const baseFrustumCommandsList = view.frustumCommandsList;
@@ -3067,6 +3074,7 @@ function executeColumbusWorldCopyClassification(
   frameState.cullingVolume = cullingVolume;
   uniformState.update(frameState);
   uniformState.updateFrustum(frustum);
+  uniformState.globeDepthTexture = savedGlobeDepthTexture;
 }
 
 /**
@@ -3181,19 +3189,18 @@ function executeCommands(scene, passState) {
     usePostProcessSelected,
   } = scene._environmentState;
 
-  // World copies classify per frustum, inside the loop below, so they see the
-  // live terrain depth of the frustum they belong to - for color and for pick
-  // passes alike, since the primary loop classifies in both. Requires the globe
-  // depth framebuffer: that is what the primary loop packs for the frustum and
-  // what ground classification shaders sample. Everything else (no globe depth,
-  // translucent depth pick) keeps classifying in the copy pass further down.
-  const classifyCopyInline =
-    !renderTranslucentDepthForPick &&
-    useGlobeDepthFramebuffer &&
+  // GlobeSurfaceTileProvider.computeTileVisibility 里 tile._distance 的哥伦布
+  // 视图覆盖只在存在非零世界副本时生效——主世界上覆盖会让 LOD 选层抖动，
+  // 极端相机轨迹（飞到太空再俯冲）下引发瓦片风暴（渲染进程 OOM）。
+  const columbusCopiesEnabled =
     frameState.columbusRepeatWorlds === true &&
     (scene.mode === SceneMode.SCENE2D ||
       scene.mode === SceneMode.COLUMBUS_VIEW) &&
-    (passes.render || passes.pick || passes.pickVoxel);
+    !picking;
+  const classifyCopyInline =
+    !renderTranslucentDepthForPick &&
+    useGlobeDepthFramebuffer &&
+    columbusCopiesEnabled;
 
   const {
     globeDepth,
@@ -3273,16 +3280,13 @@ function executeCommands(scene, passState) {
     }
 
     if (useGlobeDepthFramebuffer) {
-      // Keep one globe depth copy per frustum when the Columbus world copies
-      // are drawn: they re-execute a primary frustum's classification, which
-      // decodes depth against that frustum's near/far, so they need the copy
-      // packed with those same ranges. Without the copies a single shared
-      // texture is enough (and avoids allocating a texture per frustum).
-      globeDepth.executeCopyDepth(
-        context,
-        passState,
-        frameState.columbusRepeatWorlds === true ? index : 0,
-      );
+      // Always use the shared globe depth copy (index 0). Per-frustum copies
+      // (index > 0) are what allocate native GPU memory every frame on some
+      // drivers (~500MB/s during high-altitude camera flights, until Renderer
+      // OOM). The copies' classification samples the shared copy instead; its
+      // depth ranges are packed against the primary frustum 0, which can show
+      // minor artifacts on far frustums of copy worlds - an acceptable trade.
+      globeDepth.executeCopyDepth(context, passState, 0);
     }
 
     // Draw terrain classification
@@ -3561,12 +3565,7 @@ function executeCommands(scene, passState) {
     passState.framebuffer = originalFramebuffer;
   }
 
-  if (
-    frameState.columbusRepeatWorlds === true &&
-    (frameState.mode === SceneMode.SCENE2D ||
-      frameState.mode === SceneMode.COLUMBUS_VIEW) &&
-    (passes.render || passes.pick || passes.pickVoxel)
-  ) {
+  if (columbusCopiesEnabled) {
     executeColumbusWorldCopyCommands(
       scene,
       passState,
