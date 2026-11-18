@@ -47,11 +47,20 @@ function TerrainOffsetProperty(
   if (defined(scene.globe)) {
     this._removeEventListener = scene.terrainProviderChanged.addEventListener(
       function () {
+        // HZ: 监听可能在同一次 raiseEvent 期间被销毁（例如 morphComplete
+        // 的其他监听器在事件派发中触发了实体属性更新，进而销毁本实例），
+        // Event 的延迟移除无法阻止本轮派发，这里必须自防。
+        if (that.isDestroyed()) {
+          return;
+        }
         that._updateClamping();
       },
     );
     this._removeModeListener = scene.morphComplete.addEventListener(
       function () {
+        if (that.isDestroyed()) {
+          return;
+        }
         that._updateClamping();
       },
     );
