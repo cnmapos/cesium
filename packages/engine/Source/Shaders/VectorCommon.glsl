@@ -46,10 +46,17 @@ vec4 vectorPolylineRender(vec2 vectorUv, vec4 baseColor)
     // Inverse UV-per-pixel Jacobian: measures line distance in screen pixels so
     // width stays constant under anisotropic (oblique) foreshortening.
     mat2 screenFromUv = inverse(mat2(dFdx(vectorUv), dFdy(vectorUv)));
+
+    // MSAA shades a border-straddling pixel at its center even when that
+    // center lies slightly outside the tile mesh (some samples are still
+    // covered). Clamp the lookup UV back into the tile so such fragments
+    // keep the border fill instead of dropping it; coverage is still
+    // governed by the mesh triangles, so nothing draws out of bounds.
+    vec2 tileUv = clamp(vectorUv, vec2(0.0), vec2(1.0));
     int gridWidth = int(texelFetch(u_vectorGridCellIndicesTexture, vectorIndexToUv(0, headerSize), 0).r);
     int gridHeight = int(texelFetch(u_vectorGridCellIndicesTexture, vectorIndexToUv(1, headerSize), 0).r);
-    int cellX = clamp(int(vectorUv.x * float(gridWidth)), 0, gridWidth - 1);
-    int cellY = clamp(int(vectorUv.y * float(gridHeight)), 0, gridHeight - 1);
+    int cellX = clamp(int(tileUv.x * float(gridWidth)), 0, gridWidth - 1);
+    int cellY = clamp(int(tileUv.y * float(gridHeight)), 0, gridHeight - 1);
     int cellIndex = cellX + cellY * gridWidth;
 
     // Cell end offsets follow the two gridWidth/gridHeight texels, so cell
@@ -73,7 +80,7 @@ vec4 vectorPolylineRender(vec2 vectorUv, vec4 baseColor)
 
         float lineWidth = texelFetch(u_vectorWidthTexture, primitiveUv, 0).r * 255.0;
 
-        vec2 offsetUv = vectorOffsetToLine(vectorUv, segment);
+        vec2 offsetUv = vectorOffsetToLine(tileUv, segment);
         if (length(screenFromUv * offsetUv) < lineWidth)
         {
             // Alpha-composite vector over terrain.
@@ -130,10 +137,16 @@ vec4 vectorPolygonRender(vec2 vectorUv, vec4 baseColor)
         return baseColor;
     }
 
+    // MSAA shades a border-straddling pixel at its center even when that
+    // center lies slightly outside the tile mesh (some samples are still
+    // covered). Clamp the lookup UV back into the tile so such fragments
+    // keep the border fill instead of dropping it; coverage is still
+    // governed by the mesh triangles, so nothing draws out of bounds.
+    vec2 tileUv = clamp(vectorUv, vec2(0.0), vec2(1.0));
     int gridWidth = int(texelFetch(u_vectorPolygonGridCellIndicesTexture, vectorIndexToUv(0, headerSize), 0).r);
     int gridHeight = int(texelFetch(u_vectorPolygonGridCellIndicesTexture, vectorIndexToUv(1, headerSize), 0).r);
-    int cellX = clamp(int(vectorUv.x * float(gridWidth)), 0, gridWidth - 1);
-    int cellY = clamp(int(vectorUv.y * float(gridHeight)), 0, gridHeight - 1);
+    int cellX = clamp(int(tileUv.x * float(gridWidth)), 0, gridWidth - 1);
+    int cellY = clamp(int(tileUv.y * float(gridHeight)), 0, gridHeight - 1);
     int cellIndex = cellX + cellY * gridWidth;
 
     // Cell end offsets follow the two gridWidth/gridHeight texels, so cell
@@ -165,7 +178,7 @@ vec4 vectorPolygonRender(vec2 vectorUv, vec4 baseColor)
             inside = false;
         }
 
-        if (vectorEdgeCrossesRay(edge, vectorUv))
+        if (vectorEdgeCrossesRay(edge, tileUv))
         {
             inside = !inside;
         }
