@@ -402,7 +402,25 @@ class VectorGltf3DTileContent {
           collection.modelMatrix,
         );
 
-        if (!isHeightReferenceClamp(tileset._heightReference)) {
+        // 贴地（clamp）几何是烘焙进地球表面矢量管线绘制的，引擎只在 3D 模式
+        // 下提供这条通道；2D / Columbus 下退回常规模型渲染，否则整层不可见。
+        const clampToGlobe =
+          isHeightReferenceClamp(tileset._heightReference) &&
+          frameState.mode === SceneMode.SCENE3D;
+        if (!clampToGlobe) {
+          // 底图类矢量瓦片（renderBelowClassification）改到 GLOBE pass 绘制，
+          // 让贴地分类的用户面/线能盖在它上面。只在 Columbus 下这么做：
+          // 3D 下 GLOBE pass 位于球面之下，会整层不可见（3D 由贴地管线负责）。
+          // SCENE2D 正射投影下所有内容共面，任何深度压近都会让共面的用户
+          // 元素永远深度失败——2D 改走 OPAQUE/TRANSLUCENT + 关深度写入，
+          // 靠图元顺序（地图集合需先于用户元素加入场景）保证层级。
+          const renderBelow =
+            tileset._renderBelowClassification === true &&
+            frameState.mode === SceneMode.COLUMBUS_VIEW;
+          collection._renderBelowClassification = renderBelow;
+          collection._renderOverlayNoDepth =
+            tileset._renderBelowClassification === true &&
+            frameState.mode === SceneMode.SCENE2D;
           collection.update(frameState);
         } else if (isSelected && defined(vectorProvider)) {
           vectorProvider.markSelected(collection, frameState.frameNumber);

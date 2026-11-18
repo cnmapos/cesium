@@ -4864,6 +4864,10 @@ function prePassesUpdate(scene) {
 
   const frameState = scene._frameState;
   scene.primitives.prePassesUpdate(frameState);
+  // 贴地图元集合也参与 prePasses 生命周期：放到底图位置（zIndex 0）的
+  // 3D Tiles 类 provider（如矢量瓦片）依赖 prePassesUpdate 驱动请求调度，
+  // 缺席会导致瓦片选中/加载停滞。常规贴地图元未实现该方法，转发为空操作。
+  scene._groundPrimitives.prePassesUpdate(frameState);
 
   if (defined(scene.globe)) {
     scene.globe.update(frameState);
@@ -4875,6 +4879,7 @@ function prePassesUpdate(scene) {
 
 function postPassesUpdate(scene) {
   scene.primitives.postPassesUpdate(scene._frameState);
+  scene._groundPrimitives.postPassesUpdate(scene._frameState);
   RequestScheduler.update();
 }
 

@@ -105,6 +105,25 @@ class BufferPrimitiveCollection {
     this._blendOption = options.blendOption ?? BlendOption.TRANSLUCENT;
 
     /**
+     * Renders this collection beneath ground-clamped classification
+     * primitives (Columbus view). Commands go to the terrain
+     * classification pass without depth test/write.
+     * @type {boolean}
+     * @default false
+     * @ignore
+     */
+    this._renderBelowClassification = false;
+
+    /**
+     * Overlay rendering without depth test/write for SCENE2D base-map
+     * vector collections.
+     * @type {boolean}
+     * @default false
+     * @ignore
+     */
+    this._renderOverlayNoDepth = false;
+
+    /**
      * Transforms geometry from model to world coordinates.
      * @type {Matrix4}
      * @default Matrix4.IDENTITY

@@ -39,6 +39,11 @@ import defined from "../Core/defined.js";
  * @property {number} [glyphReclaimMargin]
  * @property {number} [maximumVisibleLabels]
  * @property {boolean} [renderGeometry]
+ * @property {HeightReference} [heightReference] Height reference for vector
+ * point, line, and polygon geometry. CLAMP_TO_GROUND bakes geometry into the
+ * globe surface so it renders beneath ground-clamped classification primitives.
+ * @property {boolean} [renderBelowClassification] Renders vector geometry
+ * beneath ground-clamped classification primitives in non-3D scene modes.
  * @property {"mvt"|"geovis"} [format]
  * @property {number} [maximumScreenSpaceError]
  * @property {boolean} [adaptiveScreenSpaceError] Enables a camera-height-based
@@ -84,10 +89,16 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
     this._labelsVisible = true;
     this._labelHeightReference =
       options.labelHeightReference ?? HeightReference.CLAMP_TO_GROUND;
+    this._heightReference = options.heightReference;
     this._labelTransitionDuration = options.labelTransitionDuration ?? 0.2;
     this._labelTransitionSteps = options.labelTransitionSteps ?? 4;
     this._maximumRetiringLabels = options.maximumRetiringLabels ?? 512;
     this._renderGeometry = options.renderGeometry ?? true;
+    // 底图类矢量瓦片应渲染在地形分类（用户面/线元素）之前，否则其不透明
+    // 几何会在 CESIUM_3D_TILE pass（pass 6）中覆盖 TERRAIN_CLASSIFICATION
+    // pass（pass 3）已写入的分类颜色，导致用户绘制的面/线被底图遮住。
+    this._renderBelowClassification =
+      options.renderBelowClassification === true;
     this._maximumLabelsPerTile = Math.max(
       0,
       Math.floor(options.maximumLabelsPerTile ?? 4096),
@@ -129,6 +140,7 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @param {string} [options.featureIdProperty] MVT property name to use as feature ID.
    * @param {object[]} [options.labelStyles] Declarative MVT text-symbol rules.
    * @param {HeightReference} [options.labelHeightReference=HeightReference.CLAMP_TO_GROUND] Height reference for MVT labels. Ground clamping keeps labels fixed to terrain and 3D Tiles while the camera moves.
+   * @param {HeightReference} [options.heightReference] Height reference for vector point, line, and polygon geometry. When clamping is requested the geometry is baked into the globe vector surface pipeline, so it is drawn as part of the terrain surface, below ground-classified primitives such as entity polygons and polylines.
    * @param {number} [options.labelTransitionDuration=0.2] Seconds used to cross-fade labels when tile selection changes. Set to 0 to disable transitions.
    * @param {number} [options.labelTransitionSteps=4] Opacity steps in each label transition. A small value keeps rapid zoom and pan updates bounded.
    * @param {number} [options.maximumRetiringLabels=512] Maximum labels retained for fade-out after a tile switch. Excess labels are removed immediately to protect frame time during rapid navigation.
@@ -138,6 +150,7 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @param {number} [options.glyphReclaimMargin] Minimum number of unreferenced glyphs required before the atlas is rebuilt. Defaults to a quarter of `maximumCachedGlyphs`. A rebuild that would reclaim less than this is skipped, since it would discard and immediately re-rasterize the same glyphs.
    * @param {number} [options.maximumVisibleLabels=1000] Maximum labels shown in one frame. Lower-priority labels are dropped, which keeps the set of live glyphs inside the atlas budget.
    * @param {boolean} [options.renderGeometry=true] Render point, line, and polygon geometry in addition to labels.
+   * @param {boolean} [options.renderBelowClassification=false] Basemap-style providers render in the GLOBE pass (before terrain classification) so user-drawn ground polygons/lines classify on top instead of being covered by the tileset's opaque geometry.
    * @param {"mvt"|"geovis"} [options.format="mvt"] PBF schema used by the tile service.
    * @param {number} [options.maximumScreenSpaceError] Tile screen-space error.
    * @param {boolean} [options.adaptiveScreenSpaceError=false] Adapt screen-space error from 16 at globe scale to 1 near street scale.
@@ -180,6 +193,9 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
     if (defined(this._maximumCacheOverflowBytes)) {
       options.maximumCacheOverflowBytes = this._maximumCacheOverflowBytes;
     }
+    if (defined(this._heightReference)) {
+      options.heightReference = this._heightReference;
+    }
     return options;
   }
 
@@ -191,6 +207,7 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
   _configureTileset(tileset) {
     tileset._modelUpAxis = Axis.Z;
     tileset._modelForwardAxis = Axis.X;
+    tileset._renderBelowClassification = this._renderBelowClassification;
     if (defined(this._maximumScreenSpaceError)) {
       /** @type {*} */ (tileset).maximumScreenSpaceError =
         this._maximumScreenSpaceError;

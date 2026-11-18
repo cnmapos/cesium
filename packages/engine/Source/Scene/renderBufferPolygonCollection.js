@@ -320,12 +320,22 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
   }
 
   if (!defined(renderContext.renderState)) {
+    // 底图类矢量瓦片与地球表面共面绘制。命令走 TERRAIN_CLASSIFICATION
+    // pass 且不测深、不写深：地形颜色已在 GLOBE pass 画完，这里在其后
+    // 纯补一层颜色；深度缓冲保持球面真实深度，贴地分类元素（面/线）的
+    // stencil/深度判定不受影响，正常画在底图之上。（此前用 depthRange
+    // 把整层压到球面之前的做法会在远视角（h≈10^6+）污染深度缓冲，导致
+    // 共面分类元素永远深度失败被遮挡。）本集合需先于用户元素入列
+    // （app 侧把 provider 放进 scene.groundPrimitives 且 zIndex 最小）。
+    const belowClassification = collection._renderBelowClassification === true;
+    const overlayNoDepth = collection._renderOverlayNoDepth === true;
     renderContext.renderState = RenderState.fromCache({
       blending:
         collection._blendOption === BlendOption.OPAQUE
           ? BlendingState.DISABLED
           : BlendingState.ALPHA_BLEND,
-      depthTest: { enabled: true },
+      depthTest: { enabled: !overlayNoDepth && !belowClassification },
+      depthMask: !overlayNoDepth && !belowClassification,
     });
   }
 
@@ -380,9 +390,12 @@ function renderBufferPolygonCollection(collection, frameState, renderContext) {
       shaderProgram: renderContext.shaderProgram,
       primitiveType: PrimitiveType.TRIANGLES,
       pass:
-        collection._blendOption === BlendOption.OPAQUE
-          ? Pass.OPAQUE
-          : Pass.TRANSLUCENT,
+        collection._renderBelowClassification ||
+        collection._renderOverlayNoDepth
+          ? Pass.TERRAIN_CLASSIFICATION
+          : collection._blendOption === BlendOption.OPAQUE
+            ? Pass.OPAQUE
+            : Pass.TRANSLUCENT,
       pickId: collection._allowPicking ? "v_pickColor" : undefined,
       owner: collection,
       count: drawCount,

@@ -488,12 +488,19 @@ function renderBufferPolylineCollection(collection, frameState, renderContext) {
   }
 
   if (!defined(renderContext.renderState)) {
+    // 与 renderBufferPolygonCollection 保持一致：底图类折线在 GLOBE pass
+    // 与球面共面绘制时不测深、不写深，只画颜色——深度缓冲保持球面真实
+    // 深度，贴地分类元素（面/线）按原有深度判定正常通过。
+    // SCENE2D 正射共面时同样不测深、不写深，纯靠绘制顺序分层。
+    const belowClassification = collection._renderBelowClassification === true;
+    const overlayNoDepth = collection._renderOverlayNoDepth === true;
     renderContext.renderState = RenderState.fromCache({
       blending:
         collection._blendOption === BlendOption.OPAQUE
           ? BlendingState.DISABLED
           : BlendingState.ALPHA_BLEND,
-      depthTest: { enabled: true },
+      depthTest: { enabled: !overlayNoDepth && !belowClassification },
+      depthMask: !overlayNoDepth && !belowClassification,
     });
   }
 
@@ -520,9 +527,12 @@ function renderBufferPolylineCollection(collection, frameState, renderContext) {
       shaderProgram: renderContext.shaderProgram,
       primitiveType: PrimitiveType.TRIANGLES,
       pass:
-        collection._blendOption === BlendOption.OPAQUE
-          ? Pass.OPAQUE
-          : Pass.TRANSLUCENT,
+        collection._renderBelowClassification ||
+        collection._renderOverlayNoDepth
+          ? Pass.TERRAIN_CLASSIFICATION
+          : collection._blendOption === BlendOption.OPAQUE
+            ? Pass.OPAQUE
+            : Pass.TRANSLUCENT,
       pickId: collection._allowPicking ? "v_pickColor" : undefined,
       owner: collection,
       count: drawCount,
