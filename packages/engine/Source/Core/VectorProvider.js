@@ -120,6 +120,23 @@ class VectorProvider {
      * @private
      */
     this._dirtyRectangles = [];
+
+    /**
+     * Membership version of {@link VectorProvider#_collections}. Incremented
+     * at most once per frame after any add/remove changes the member set, so
+     * cached tiles baked against an older member set are re-baked the next
+     * time they are rendered instead of keeping stale geometry forever.
+     * @type {number}
+     * @private
+     */
+    this._version = 0;
+
+    /**
+     * Whether the member set changed since the version was last incremented.
+     * @type {boolean}
+     * @private
+     */
+    this._pendingVersionBump = false;
   }
 
   /** @type {TilingScheme} */
@@ -143,6 +160,7 @@ class VectorProvider {
     const previousSize = this._collections.size;
     this._collections.add(collection);
     if (this._collections.size !== previousSize) {
+      this._pendingVersionBump = true;
       this._markCollectionRegionDirty(collection);
     }
   }
@@ -154,6 +172,7 @@ class VectorProvider {
     this._selectedThisFrame.delete(collection);
     this._selectionDriven.delete(collection);
     if (this._collections.delete(collection)) {
+      this._pendingVersionBump = true;
       this._markCollectionRegionDirty(collection);
     }
   }
@@ -176,6 +195,7 @@ class VectorProvider {
     const previousSize = this._collections.size;
     this._collections.add(collection);
     if (this._collections.size !== previousSize) {
+      this._pendingVersionBump = true;
       this._markCollectionRegionDirty(collection);
     }
   }
@@ -189,6 +209,7 @@ class VectorProvider {
       if (!this._selectedThisFrame.has(collection)) {
         this._selectionDriven.delete(collection);
         if (this._collections.delete(collection)) {
+          this._pendingVersionBump = true;
           this._markCollectionRegionDirty(collection);
         }
       }
@@ -203,11 +224,17 @@ class VectorProvider {
    * @private
    */
   _markCollectionRegionDirty(collection) {
-    const collectionRectangle = Rectangle.fromBoundingSphere(
-      collection.boundingVolume,
-      this._tilingScheme.ellipsoid,
-      new Rectangle(),
-    );
+    // Prefer the exact source-tile rectangle stamped by the vector content;
+    // low-level tiles have huge bounding spheres whose derived rectangle
+    // covers (nearly) the whole world and would re-bake everything.
+    const exactRectangle = collection._clampedVectorRectangle;
+    const collectionRectangle = defined(exactRectangle)
+      ? Rectangle.clone(exactRectangle, new Rectangle())
+      : Rectangle.fromBoundingSphere(
+          collection.boundingVolume,
+          this._tilingScheme.ellipsoid,
+          new Rectangle(),
+        );
     this._dirtyRectangles.push(collectionRectangle);
   }
 
@@ -224,18 +251,26 @@ class VectorProvider {
 
     /** @type {VectorTileData} */
     const result = { show: true };
+    result.vectorProviderVersion = this._version;
 
-    for (const collection of this._collections) {
+    const collections = Array.from(this._collections);
+    const collectionCount = collections.length;
+
+    for (let i = 0; i < collectionCount; i++) {
+      const collection = collections[i];
       const packer = collectionPackers.get(collection.constructor);
       if (!defined(packer)) {
         continue;
       }
 
-      const collectionRectangle = Rectangle.fromBoundingSphere(
-        collection.boundingVolume,
-        tilingScheme.ellipsoid,
-        scratchCollectionRectangle,
-      );
+      const exactRectangle = collection._clampedVectorRectangle;
+      const collectionRectangle = defined(exactRectangle)
+        ? exactRectangle
+        : Rectangle.fromBoundingSphere(
+            collection.boundingVolume,
+            tilingScheme.ellipsoid,
+            scratchCollectionRectangle,
+          );
 
       const isIntersected = !!Rectangle.intersection(
         tileRectangle,
@@ -244,6 +279,16 @@ class VectorProvider {
       );
 
       if (!isIntersected) {
+        continue;
+      }
+
+      if (
+        defined(exactRectangle) &&
+        isSupersededByFinerCollection(collections, i, tileRectangle)
+      ) {
+        // A finer tile from the same source fully covers this surface tile;
+        // skip the coarser ancestor so its geometry is not composited twice
+        // (double alpha along partially refined tile borders).
         continue;
       }
 
@@ -307,7 +352,16 @@ class VectorProvider {
   updateTileData(x, y, level, context, currentData) {
     const dirtyRectangles = this._dirtyRectangles;
     const tilingScheme = this._tilingScheme;
-    if (!intersectRectangles(x, y, level, dirtyRectangles, tilingScheme)) {
+    // Re-bake tiles whose data was baked against a different member set,
+    // even when no dirty region currently covers them (e.g. tiles that were
+    // cached while not rendered).
+    const membershipChanged =
+      defined(currentData) &&
+      currentData.vectorProviderVersion !== this._version;
+    if (
+      !membershipChanged &&
+      !intersectRectangles(x, y, level, dirtyRectangles, tilingScheme)
+    ) {
       return currentData;
     }
 
@@ -332,6 +386,10 @@ class VectorProvider {
    * frame, before {@link VectorProvider#updateTileData}.
    */
   update() {
+    if (this._pendingVersionBump) {
+      this._version++;
+      this._pendingVersionBump = false;
+    }
     for (const collection of this._collections) {
       const cache = this._collectionDataCache.get(collection);
       if (!defined(cache)) {
@@ -419,6 +477,59 @@ function intersectRectangles(x, y, level, rectangles, tilingScheme) {
     );
 
     if (isIntersected) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Returns whether the collection at index {@link index} is a coarser tile of
+ * the same source that is fully superseded, for this surface tile, by a
+ * finer collection whose exact tile rectangle contains the surface tile.
+ *
+ * @param {Array<BufferPrimitiveCollection<BufferPrimitive>>} collections
+ * @param {number} index
+ * @param {Rectangle} tileRectangle
+ * @returns {boolean}
+ * @private
+ */
+function isSupersededByFinerCollection(collections, index, tileRectangle) {
+  const coarse = collections[index];
+  const coarseRectangle = coarse._clampedVectorRectangle;
+  const sourceGroup = coarse._vectorSourceGroup;
+  if (!defined(coarseRectangle) || !defined(sourceGroup)) {
+    return false;
+  }
+  const coarseArea =
+    (coarseRectangle.east - coarseRectangle.west) *
+    (coarseRectangle.north - coarseRectangle.south);
+
+  for (let i = 0; i < collections.length; i++) {
+    if (i === index) {
+      continue;
+    }
+    const fine = collections[i];
+    if (fine._vectorSourceGroup !== sourceGroup) {
+      continue;
+    }
+    const fineRectangle = fine._clampedVectorRectangle;
+    if (!defined(fineRectangle)) {
+      continue;
+    }
+    const fineArea =
+      (fineRectangle.east - fineRectangle.west) *
+      (fineRectangle.north - fineRectangle.south);
+    if (fineArea >= coarseArea) {
+      continue;
+    }
+    if (
+      fineRectangle.west <= tileRectangle.west &&
+      fineRectangle.east >= tileRectangle.east &&
+      fineRectangle.south <= tileRectangle.south &&
+      fineRectangle.north >= tileRectangle.north
+    ) {
       return true;
     }
   }

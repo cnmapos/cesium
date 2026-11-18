@@ -14,6 +14,7 @@ import createMvtLabelCandidates, {
 import HeightReference from "./HeightReference.js";
 import oneTimeWarning from "../Core/oneTimeWarning.js";
 import defined from "../Core/defined.js";
+import WebMercatorTilingScheme from "../Core/WebMercatorTilingScheme.js";
 
 /** @import Cesium3DTile from "./Cesium3DTile.js"; */
 /** @import Cesium3DTileset from "./Cesium3DTileset.js"; */
@@ -68,6 +69,13 @@ import defined from "../Core/defined.js";
 const createMvtTileTaskProcessor = new TaskProcessor("createMvtTile", 4);
 const labelOnlyCacheBytes = 64 * 1024 * 1024;
 const labelOnlyMaximumCacheOverflowBytes = 16 * 1024 * 1024;
+
+/**
+ * Matches the Web Mercator grid used to build the backing tileset tree, so
+ * tiles can carry their exact tiling-scheme rectangle.
+ * @ignore
+ */
+const scratchTilingScheme = new WebMercatorTilingScheme();
 
 /**
  * A Mapbox Vector Tiles (MVT) data provider. Loads .mvt or .pbf tiles, converting tiles
@@ -325,6 +333,11 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
           labelCandidates,
           tileCoordinates,
           this._renderGeometry,
+          scratchTilingScheme.tileXYToRectangle(
+            tileCoordinates.tileX,
+            tileCoordinates.tileY,
+            tileCoordinates.tileZ,
+          ),
         );
       },
     };

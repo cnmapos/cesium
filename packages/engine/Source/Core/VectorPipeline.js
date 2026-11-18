@@ -45,6 +45,10 @@ const scratchSegmentEnd = new Cartesian2();
  *
  * @property {boolean} show Whether this vector data should be rendered.
  *
+ * @property {number} [vectorProviderVersion] Membership version of the
+ * source VectorProvider at bake time; mismatch triggers a re-bake so cached
+ * tiles never keep geometry from a stale member set.
+ *
  * Stage 1: Collect vector segments and polygon rings intersecting tile.
  * @property {number[][]} [polylineSegments] Tile-clipped polyline segments as [ax, ay, bx, by] in tile UV space.
  * @property {number[]} [polylineSegmentPrimitiveIndices] Index per segment, mapping to material for the segment.

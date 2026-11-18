@@ -34,6 +34,7 @@ import { getMvtLabelCandidatesByteLength } from "./MvtLabelCandidates.js";
 /** @import FrameState from "./FrameState.js"; */
 /** @import ImplicitMetadataView from "./ImplicitMetadataView.js"; */
 /** @import Ray from "../Core/Ray.js"; */
+/** @import Rectangle from "../Core/Rectangle.js"; */
 /** @import Resource from "../Core/Resource.js"; */
 
 /**
@@ -80,6 +81,14 @@ class VectorGltf3DTileContent {
     this._tile = tile;
     /** @type {Resource} */
     this._resource = resource;
+
+    /**
+     * Exact tiling-scheme rectangle of the source vector tile, when known.
+     * Used to stamp collections so the globe vector provider can mark precise
+     * dirty regions and resolve overlapping levels of detail.
+     * @type {Rectangle|undefined}
+     */
+    this._vectorTileRectangle = undefined;
 
     /** @type {VectorGltfModel} */
     this._model = undefined;
@@ -469,6 +478,9 @@ class VectorGltf3DTileContent {
    * @param {Array<*>} [mvtLabelCandidates]
    * @param {{tileX:number,tileY:number,tileZ:number}} [tileCoordinates]
    * @param {boolean} [renderVectorGeometry=true]
+   * @param {Rectangle} [tileRectangle] Exact tiling-scheme rectangle of the
+   * source vector tile; stamped onto the collections for precise dirty
+   * tracking and overlap resolution in the globe vector pipeline.
    * @returns {Promise<VectorGltf3DTileContent>}
    */
   static async fromGltf(
@@ -480,9 +492,11 @@ class VectorGltf3DTileContent {
     mvtLabelCandidates,
     tileCoordinates,
     renderVectorGeometry,
+    tileRectangle,
   ) {
     const content = new VectorGltf3DTileContent(tileset, tile, resource);
     content._renderVectorGeometry = renderVectorGeometry ?? true;
+    content._vectorTileRectangle = tileRectangle;
     const modelOptions = makeModelOptions(tileset, tile, content, glb);
     const model = await Model.fromGltfAsync(modelOptions);
     // @ts-expect-error Requires Model conversion to ES6 class.
@@ -567,6 +581,17 @@ function initializeVectorPrimitives(content, frameState) {
   content._collectionFeatureTableIds = result.collectionFeatureTableIds;
   content._featuresByTableId = result.featuresByTableId;
   content._collectionSceneMode = frameState.mode;
+
+  const tileRectangle = content._vectorTileRectangle;
+  if (defined(tileRectangle)) {
+    // Stamp the exact source-tile rectangle and the owning tileset so the
+    // globe vector provider can mark precise dirty regions and drop coarser
+    // ancestor tiles that are fully superseded by finer descendants.
+    for (const collection of content._collections) {
+      collection._clampedVectorRectangle = tileRectangle;
+      collection._vectorSourceGroup = content._tileset;
+    }
+  }
 }
 
 /**

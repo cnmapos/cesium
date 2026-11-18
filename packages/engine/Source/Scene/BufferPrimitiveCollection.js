@@ -21,6 +21,7 @@ import BlendOption from "../Scene/BlendOption.js";
 /** @import BufferPrimitive from "./BufferPrimitive.js"; */
 /** @import BufferPrimitiveMaterial from "./BufferPrimitiveMaterial.js"; */
 /** @import PickId from "../Renderer/PickId.js"; */
+/** @import Rectangle from "../Core/Rectangle.js"; */
 
 /**
  * @typedef {object} BufferPrimitiveOptions
@@ -122,6 +123,26 @@ class BufferPrimitiveCollection {
      * @ignore
      */
     this._renderOverlayNoDepth = false;
+
+    /**
+     * Exact tiling-scheme rectangle of the source vector tile, assigned by
+     * VectorGltf3DTileContent. Lets the globe vector provider mark precise
+     * dirty regions and resolve overlapping levels of detail.
+     * @type {Rectangle|undefined}
+     * @default undefined
+     * @ignore
+     */
+    this._clampedVectorRectangle = undefined;
+
+    /**
+     * Identity of the vector source (tileset) this collection belongs to,
+     * assigned by VectorGltf3DTileContent. Used only to compare collections
+     * from the same source when resolving overlapping levels of detail.
+     * @type {object|undefined}
+     * @default undefined
+     * @ignore
+     */
+    this._vectorSourceGroup = undefined;
 
     /**
      * Transforms geometry from model to world coordinates.
