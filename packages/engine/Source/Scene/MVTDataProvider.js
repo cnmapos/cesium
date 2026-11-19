@@ -66,6 +66,16 @@ import WebMercatorTilingScheme from "../Core/WebMercatorTilingScheme.js";
  * @property {object} [decodedTile]
  */
 
+/**
+ * @typedef {object} MVTProviderTileset
+ * @property {object} [uniformLevelMode]
+ */
+
+/**
+ * @typedef {object} MVTProviderScene
+ * @property {MVTProviderTileset} [globe]
+ */
+
 const createMvtTileTaskProcessor = new TaskProcessor("createMvtTile", 4);
 const labelOnlyCacheBytes = 64 * 1024 * 1024;
 const labelOnlyMaximumCacheOverflowBytes = 16 * 1024 * 1024;
@@ -237,12 +247,15 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
     }
   }
 
-  /** @returns {boolean} */
+  /**
+   * Gets or sets whether labels are visible.
+   *
+   * @type {boolean}
+   */
   get labelsVisible() {
     return this._labelsVisible;
   }
 
-  /** @param {boolean} value */
   set labelsVisible(value) {
     this.setLabelsVisible(value);
   }
@@ -348,12 +361,8 @@ class MVTDataProvider extends UrlTemplate3DTilesDataProvider {
    * @protected
    */
   update(frameState) {
-    const scene = /** @type {{ globe?: { uniformLevelMode?: object } }} */ (
-      this._scene
-    );
-    const tileset = /** @type {{ uniformLevelMode?: object }} */ (
-      this._tileset
-    );
+    const scene = /** @type {MVTProviderScene} */ (this._scene);
+    const tileset = /** @type {MVTProviderTileset} */ (this._tileset);
     if (
       this._inheritGlobeUniformLevelMode &&
       defined(tileset) &&

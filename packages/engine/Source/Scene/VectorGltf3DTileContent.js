@@ -37,13 +37,7 @@ import { getMvtLabelCandidatesByteLength } from "./MvtLabelCandidates.js";
 /** @import Rectangle from "../Core/Rectangle.js"; */
 /** @import Resource from "../Core/Resource.js"; */
 
-/**
- * @typedef {object} VectorGltfModelStatistics
- * @property {number} geometryByteLength
- * @property {number} texturesByteLength
- */
-
-/** @typedef {Model & {statistics: VectorGltfModelStatistics}} VectorGltfModel */
+/** @typedef {Model} VectorGltfModel */
 
 /** @ignore */
 const point = new BufferPoint();
@@ -170,11 +164,13 @@ class VectorGltf3DTileContent {
     // to size itself correctly.
     return this._collections.reduce(
       (totalByteLength, collection) => totalByteLength + collection.byteLength,
+      // @ts-expect-error Model.statistics is marked private in JSDoc.
       this._model?.statistics.geometryByteLength ?? 0,
     );
   }
 
   get texturesByteLength() {
+    // @ts-expect-error Model.statistics is marked private in JSDoc.
     return this._model?.statistics.texturesByteLength ?? 0;
   }
 
